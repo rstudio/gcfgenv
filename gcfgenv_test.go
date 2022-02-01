@@ -172,6 +172,67 @@ f1 = value
 	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
 }
 
+func (s *Suite) TestSubsections(c *check.C) {
+	c.ExpectFailure("not yet implemented")
+
+	type sec1 struct {
+		F1 string
+		F2 string
+	}
+
+	type config struct {
+		Sec1         map[string]*sec1
+		Default_Sec1 sec1
+	}
+
+	var err error
+	configString := `[default-sec1]
+f2 = default
+
+[sec1]
+f1 = geese
+
+[sec1 "k1"]
+f1 = cats
+
+[sec1 "k2"]
+f2 = dogs
+`
+	configFilled := config{
+		Sec1: map[string]*sec1{
+			"":   {F1: "geese", F2: "default"},
+			"k1": {F1: "cats", F2: "default"},
+			"k2": {F2: "dogs"},
+		},
+		Default_Sec1: sec1{F2: "default"},
+	}
+	configEnvVars := map[string]string{
+		"SEC1_F2":         "set",
+		"SEC1_k1_F1":      "set",
+		"SEC1_k2_F2":      "set",
+		"DEFAULT_SEC1_F2": "different",
+	}
+	configFilledWithEnvVars := config{
+		Sec1: map[string]*sec1{
+			"":   {F1: "set", F2: "different"},
+			"k1": {F1: "set", F2: "different"},
+			"k2": {F2: "set"},
+		},
+		Default_Sec1: sec1{F2: "different"},
+	}
+
+	cfg := config{}
+	err = gcfg.ReadStringInto(&cfg, configString)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilled)
+
+	cfg = config{}
+	r := strings.NewReader(configString)
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+}
+
 func Test(t *testing.T) {
 	_ = check.Suite(&Suite{})
 	check.TestingT(t)
