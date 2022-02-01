@@ -98,72 +98,76 @@ func (s *Suite) TestConversion(c *check.C) {
 	}
 }
 
-type sec1 struct {
-	F1      bool
-	F2      int
-	F3      float32
-	F4      string
-	F5      *int
-	private string
-}
+func (s *Suite) TestSections(c *check.C) {
+	type sec1 struct {
+		F1 string
+	}
 
-type config struct {
-	Sec1    sec1
-	Top     int
-	private string
-}
+	type config struct {
+		Sec1 sec1
+		Sec2 sec1
+	}
 
-var (
-	configString = `[sec1]
-f1 = true
-f2 = 25
-f3 = 3.12
-f4 = value
-f5 = 3
+	var err error
+	configString := `[sec1]
+f1 = value
+
+[sec2]
+f1 = value
 `
-	configFilled = config{
-		Sec1: sec1{
-			F1: true,
-			F2: 25,
-			F3: 3.12,
-			F4: "value",
-			F5: new(int),
-		},
+	configFilled := config{
+		Sec1: sec1{"value"},
+		Sec2: sec1{"value"},
 	}
-
-	configEnvVars = map[string]string{
-		"SEC1_F2":      "1",
-		"SEC1_F5":      "1",
-		"SEC1_PRIVATE": "notset",
+	configEnvVars := map[string]string{
+		"SEC2_F1": "set",
 	}
+	configFilledWithEnvVars := configFilled
+	configFilledWithEnvVars.Sec2.F1 = "set"
 
-	configFilledWithEnvVars = config{
-		Sec1: sec1{
-			F1: true,
-			F2: 1,
-			F3: 3.12,
-			F4: "value",
-			F5: new(int),
-		},
-	}
-)
-
-func init() {
-	*configFilled.Sec1.F5 = 3
-	*configFilledWithEnvVars.Sec1.F5 = 1
-}
-
-func (s *Suite) TestUpstream(c *check.C) {
 	cfg := config{}
-	err := gcfg.ReadStringInto(&cfg, configString)
+	err = gcfg.ReadStringInto(&cfg, configString)
 	c.Check(err, check.IsNil)
 	c.Check(cfg, check.DeepEquals, configFilled)
+
+	cfg = config{}
+	r := strings.NewReader(configString)
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
 }
 
-func (s *Suite) TestReadInto(c *check.C) {
+func (s *Suite) TestSkipPrivate(c *check.C) {
+	type sec1 struct {
+		F1      string
+		private string
+	}
+
+	type config struct {
+		Sec1    sec1
+		private int
+	}
+
+	var err error
+	configString := `[sec1]
+f1 = value
+`
+	configFilled := config{
+		Sec1: sec1{F1: "value"},
+	}
+	configEnvVars := map[string]string{
+		"SEC1_PRIVATE": "noset",
+	}
+	configFilledWithEnvVars := configFilled
+
 	cfg := config{}
+	err = gcfg.ReadStringInto(&cfg, configString)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilled)
+
+	cfg = config{}
 	r := strings.NewReader(configString)
-	err := readWithMapInto(r, configEnvVars, "", &cfg)
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
 	c.Check(err, check.IsNil)
 	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
 }
