@@ -233,6 +233,41 @@ f2 = dogs
 	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
 }
 
+func (s *Suite) TestGcfgTags(c *check.C) {
+	type sec1 struct {
+		F1 string `gcfg:"another-name"`
+	}
+
+	type config struct {
+		Sec1 sec1 `gcfg:"sec2"`
+	}
+
+	var err error
+	configString := `[sec2]
+another-name = value
+`
+	configFilled := config{
+		Sec1: sec1{F1: "value"},
+	}
+	configEnvVars := map[string]string{
+		"SEC2_ANOTHER_NAME": "set",
+	}
+	configFilledWithEnvVars := config{
+		Sec1: sec1{F1: "set"},
+	}
+
+	cfg := config{}
+	err = gcfg.ReadStringInto(&cfg, configString)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilled)
+
+	cfg = config{}
+	r := strings.NewReader(configString)
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+}
+
 func Test(t *testing.T) {
 	_ = check.Suite(&Suite{})
 	check.TestingT(t)
