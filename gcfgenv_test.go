@@ -106,6 +106,7 @@ func (s *Suite) TestConversion(c *check.C) {
 func (s *Suite) TestSections(c *check.C) {
 	type sec1 struct {
 		F1 string
+		F2 int
 	}
 
 	type config struct {
@@ -121,8 +122,8 @@ f1 = value
 f1 = value
 `
 	configFilled := config{
-		Sec1: sec1{"value"},
-		Sec2: sec1{"value"},
+		Sec1: sec1{"value", 0},
+		Sec2: sec1{"value", 0},
 	}
 	configEnvVars := map[string]string{
 		"SEC2_F1": "set",
@@ -140,6 +141,10 @@ f1 = value
 	err = readWithMapInto(r, configEnvVars, "", &cfg)
 	c.Check(err, check.IsNil)
 	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+
+	configEnvVars["SEC2_F2"] = "notanumber"
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.ErrorMatches, "failed to parse.*")
 }
 
 func (s *Suite) TestSkipPrivate(c *check.C) {
