@@ -73,7 +73,95 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 			continue
 		}
 		if sec.Kind() == reflect.Map {
-			// FIXME: Not yet implemented.
+			subsecType := secType.Elem().Elem()
+			// We don't know in advance what the subsections might
+			// be named -- or if they will be present in the
+			// existing map.
+			matchingEnv := make(map[string]string)
+			for e := range env {
+				if !strings.HasPrefix(e, secPrefix+"_") {
+					continue
+				}
+				newKey := strings.Replace(e, secPrefix+"_", "", 1)
+				if newKey == "" {
+					continue
+				}
+				matchingEnv[newKey] = env[e]
+			}
+
+			// First, handle overrides for existing keys in the map.
+			iter := sec.MapRange()
+			for iter.Next() {
+				key := iter.Key().Interface().(string) + "_"
+				if key == "_" {
+					key = ""
+				}
+				subsec := iter.Value().Elem()
+				for j := 0; j < subsecType.NumField(); j++ {
+					f := subsec.Field(j)
+					sf := subsecType.Field(j)
+					envVar := key + strings.ToUpper(sf.Name)
+					if !f.CanSet() || !sf.IsExported() {
+						continue
+					}
+					val, found := matchingEnv[envVar]
+					if !found {
+						continue
+					}
+					delete(matchingEnv, envVar)
+					newRef, err := valFromEnvVar(f.Type(), val)
+					if err != nil {
+						return err
+					}
+					f.Set(newRef)
+				}
+			}
+			if len(matchingEnv) == 0 {
+				continue
+			}
+
+			// Second, handle environment variables that will create
+			// new subsections. We also need to account for when
+			// there is a "default value" struct for these new
+			// subsections.
+			defaults := ref.FieldByName(
+				"Default_" + secStructField.Name)
+			if defaults == (reflect.Value{}) {
+				defaults = reflect.Zero(subsecType)
+			}
+			for j := 0; j < subsecType.NumField(); j++ {
+				sf := subsecType.Field(j)
+				if !sf.IsExported() {
+					continue
+				}
+				suf := "_" + strings.ToUpper(sf.Name)
+				for e, v := range matchingEnv {
+					if !strings.HasSuffix(e, suf) {
+						continue
+					}
+					k := strings.Replace(e, suf, "", 1)
+					key := reflect.ValueOf(k)
+					if sec.IsNil() {
+						m := reflect.MakeMap(sec.Type())
+						sec.Set(m)
+					}
+					f := sec.MapIndex(key)
+					if f == (reflect.Value{}) {
+						f = reflect.New(subsecType)
+						f.Elem().Set(defaults)
+						sec.SetMapIndex(key, f)
+					}
+					newRef, err := valFromEnvVar(sf.Type, v)
+					if err != nil {
+						return err
+					}
+					f.Elem().Field(j).Set(newRef)
+					// TODO: Does this have any unfortunate
+					// side-effects?
+					delete(matchingEnv, e)
+				}
+			}
+
 			continue
 		}
 

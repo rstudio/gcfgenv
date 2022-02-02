@@ -183,23 +183,21 @@ f1 = value
 }
 
 func (s *Suite) TestSubsections(c *check.C) {
-	c.ExpectFailure("not yet implemented")
-
-	type sec1 struct {
-		F1 string
-		F2 string
+	type sec struct {
+		F1      string
+		F2      string
+		F3      int
+		private string
 	}
 
 	type config struct {
-		Sec1         map[string]*sec1
-		Default_Sec1 sec1
+		Sec1         map[string]*sec
+		Default_Sec1 sec
+		Sec2         map[string]*sec
 	}
 
 	var err error
-	configString := `[default-sec1]
-f2 = default
-
-[sec1]
+	configString := `[sec1]
 f1 = geese
 
 [sec1 "k1"]
@@ -209,38 +207,72 @@ f1 = cats
 f2 = dogs
 `
 	configFilled := config{
-		Sec1: map[string]*sec1{
+		Sec1: map[string]*sec{
 			"":   {F1: "geese", F2: "default"},
 			"k1": {F1: "cats", F2: "default"},
 			"k2": {F2: "dogs"},
 		},
-		Default_Sec1: sec1{F2: "default"},
+		Default_Sec1: sec{F2: "default"},
 	}
 	configEnvVars := map[string]string{
-		"SEC1_F2":         "set",
-		"SEC1_k1_F1":      "set",
-		"SEC1_k2_F2":      "set",
-		"DEFAULT_SEC1_F2": "different",
+		"SEC1_F2":    "set",
+		"SEC1_k1_F1": "set",
+		"SEC1_k2_F2": "set",
 	}
 	configFilledWithEnvVars := config{
-		Sec1: map[string]*sec1{
-			"":   {F1: "set", F2: "different"},
-			"k1": {F1: "set", F2: "different"},
+		Sec1: map[string]*sec{
+			"":   {F1: "geese", F2: "set"},
+			"k1": {F1: "set", F2: "default"},
 			"k2": {F2: "set"},
 		},
-		Default_Sec1: sec1{F2: "different"},
+		Default_Sec1: sec{F2: "default"},
 	}
 
-	cfg := config{}
+	cfg := config{
+		Default_Sec1: sec{F2: "default"},
+	}
 	err = gcfg.ReadStringInto(&cfg, configString)
 	c.Check(err, check.IsNil)
 	c.Check(cfg, check.DeepEquals, configFilled)
 
-	cfg = config{}
+	cfg = config{
+		Default_Sec1: sec{F2: "default"},
+	}
 	r := strings.NewReader(configString)
 	err = readWithMapInto(r, configEnvVars, "", &cfg)
 	c.Check(err, check.IsNil)
 	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+
+	// Not all branches can be tested with a single configuration &
+	// environment variable map, so they have to be broken up.
+
+	configEnvVars["SEC1"] = "notset"
+	configEnvVars["SEC1_"] = "notset"
+	configEnvVars["SEC1_k3_F1"] = "set"
+	configEnvVars["SEC1_k3_F3"] = "1"
+	configEnvVars["SEC2_k1_F1"] = "set"
+	configFilledWithEnvVars.Sec1["k3"] = &sec{
+		F1: "set", F2: "default", F3: 1,
+	}
+	configFilledWithEnvVars.Sec2 = map[string]*sec{
+		"k1": &sec{F1: "set"},
+	}
+	cfg = config{
+		Default_Sec1: sec{F2: "default"},
+	}
+	r = strings.NewReader(configString)
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+
+	configEnvVars["SEC2_k1_F3"] = "notanumber"
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.ErrorMatches, "failed to parse.*")
+
+	configEnvVars["SEC2_k1_F3"] = "1"
+	configEnvVars["SEC2_k3_F3"] = "notanumber"
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.ErrorMatches, "failed to parse.*")
 }
 
 func (s *Suite) TestGcfgTags(c *check.C) {
