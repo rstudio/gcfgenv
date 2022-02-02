@@ -164,6 +164,17 @@ func valFromEnvVar(t reflect.Type, env string) (reflect.Value, error) {
 		var f float64
 		err := types.ScanFully(&f, env, 'v')
 		return reflect.ValueOf(f), err
+	case reflect.Slice:
+		parts := strings.Split(env, ",")
+		out := reflect.MakeSlice(t, len(parts), len(parts))
+		for i := range parts {
+			elt, err := valFromEnvVar(t.Elem(), parts[i])
+			if err != nil {
+				return reflect.Zero(t), err
+			}
+			out.Index(i).Set(elt)
+		}
+		return out, nil
 	default:
 		return reflect.Zero(t), fmt.Errorf("unsupported type: %s", kind)
 	}

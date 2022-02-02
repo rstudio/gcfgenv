@@ -54,6 +54,10 @@ var conversionCases = []struct {
 	{reflect.TypeOf(new(bool)), "on", reflect.ValueOf(true), ""},
 	{reflect.TypeOf(new(int)), "100", reflect.ValueOf(int(100)), ""},
 	{reflect.TypeOf(new(float32)), "3.14159", reflect.ValueOf(float32(3.14159)), ""},
+	// Slices.
+	{reflect.TypeOf([]string{}), "v1", reflect.ValueOf([]string{"v1"}), ""},
+	{reflect.TypeOf([]string{}), "v1,v2,v3", reflect.ValueOf([]string{"v1", "v2", "v3"}), ""},
+	{reflect.TypeOf([]int8{}), "34,0x1a", reflect.ValueOf([]int8{34, 0x1a}), ""},
 	// TextUnmarshaler.
 	{reflect.TypeOf(lowerStringValue), "VALUE", reflect.ValueOf(lowerStringValue), ""},
 	{reflect.TypeOf(new(lowerString)), "VALUE", reflect.ValueOf(lowerStringValue), ""},
@@ -72,6 +76,7 @@ var conversionCases = []struct {
 	{reflect.TypeOf(new(bool)), "notabool", zeroOf(false), "failed to parse.*"},
 	// Unsupported types.
 	{reflect.TypeOf(new(chan int)), "", zeroOf(make(chan int)), "unsupported type.*"},
+	{reflect.TypeOf([][3]int{}), "", zeroOf([][3]int{}), "unsupported type.*"},
 }
 
 func zeroOf(i interface{}) reflect.Value {
@@ -86,7 +91,7 @@ func (s *Suite) TestConversion(c *check.C) {
 			// by the values they point to instead.
 			got = got.Elem()
 		}
-		c.Check(got.Interface(), check.Equals, tc.want.Interface(),
+		c.Check(got.Interface(), check.DeepEquals, tc.want.Interface(),
 			check.Commentf("test case %d", i))
 		if tc.errMatch == "" {
 			c.Check(err, check.Equals, nil,
