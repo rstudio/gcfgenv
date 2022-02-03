@@ -104,6 +104,40 @@ func (s *Suite) TestConversion(c *check.C) {
 	}
 }
 
+func (s *Suite) TestFileSupport(c *check.C) {
+	type sec struct {
+		Field string
+	}
+	type config struct {
+		Sec sec
+	}
+	var err error
+	var cfg config
+	f, _ := os.CreateTemp(os.TempDir(), ".cfg")
+	defer f.Close()
+
+	err = ReadFileWithEnvInto("doesnotexist.cfg", "", &cfg)
+	c.Check(err, check.ErrorMatches, ".*no such file or directory")
+
+	// Empty file.
+	err = ReadFileWithEnvInto(f.Name(), "", &cfg)
+	c.Check(err, check.IsNil)
+
+	// File without BOM.
+	f.WriteString("[sec]\nfield = value")
+	err = ReadFileWithEnvInto(f.Name(), "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{"value"}})
+
+	// File with BOM.
+	f.Seek(0, 0)
+	f.Write(utf8BOM)
+	f.WriteString("[sec]\nfield = value")
+	err = ReadFileWithEnvInto(f.Name(), "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{"value"}})
+}
+
 func (s *Suite) TestMapFromEnviron(c *check.C) {
 	environ := []string{
 		"APPNAME_SEC_FIELD=geese",

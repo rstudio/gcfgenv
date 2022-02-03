@@ -13,8 +13,10 @@ struct -- the package only supports to structures and conventions permitted by
 
 ## Usage
 
-There is only one exported function, `ReadWithEnvInto()`, which wraps
-`gcfg.ReadInto()`.
+There are only two exported functions:
+
+* `ReadWithEnvInto()`, which wraps `gcfg.ReadInto()`; and
+* `ReadFileWithEnvInto()`, which wraps `gcfg.ReadFileInto()`
 
 Configuration fields are converted to environment variables using the follow
 rules:

@@ -1,6 +1,7 @@
 package gcfgenv
 
 import (
+	"bytes"
 	"encoding"
 	"fmt"
 	"io"
@@ -12,9 +13,38 @@ import (
 	"gopkg.in/gcfg.v1/types"
 )
 
+func ReadFileWithEnvInto(filename string, envPrefix string, config interface{}) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	maybeSkipBOM(f)
+	return ReadWithEnvInto(f, envPrefix, config)
+}
+
 func ReadWithEnvInto(r io.Reader, envPrefix string, config interface{}) error {
 	env := mapFromEnviron(os.Environ())
 	return readWithMapInto(r, env, envPrefix, config)
+}
+
+var utf8BOM = []byte("\ufeff")
+
+func maybeSkipBOM(r io.ReadSeeker) {
+	b := make([]byte, len(utf8BOM))
+	read, err := r.Read(b)
+	if err == nil && read == len(utf8BOM) {
+		// If we don't find a BOM, we need to seek back over the bytes
+		// we've read.
+		if !bytes.Equal(b, utf8BOM) {
+			// We can ignore errors here, they will resurface later
+			// when reading.
+			r.Seek(int64(-read), 1)
+		}
+		return
+	}
+	// We can ignore errors here, they will resurface later while reading.
+	return
 }
 
 func mapFromEnviron(environ []string) map[string]string {
