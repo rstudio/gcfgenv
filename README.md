@@ -1,11 +1,11 @@
 # gcfgenv
 
-`gcfg` is a Go package for configuring applications with environment variables
-in addition to their existing configuration files.
+`gcfgenv` is a Go package for configuring applications with environment
+variables in addition to their existing configuration files.
 
-The precise goal is to provide environment variable overrides for `gcfg`
-configurations without the need to specify anything manually whatsoever. There
-is a strong "convention over configuration" ethos.
+The precise goal is to provide environment variable overrides for [`gcfg`
+configurations](https://gopkg.in/gcfg.v1) without the need to specify anything
+manually whatsoever. There is a strong "convention over configuration" ethos.
 
 `gcfgenv` is **not** a general-purpose way to read environment variables into a
 struct -- the package only supports to structures and conventions permitted by
