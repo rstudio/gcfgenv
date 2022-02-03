@@ -56,6 +56,10 @@ other-field = elephants
   value was defaulted, so resetting a field's default via environment variable
   could lead to surprising results.
 
+## Versioning
+
+`gcfgenv` follows semantic versioning.
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See `LICENSE` for details.
