@@ -121,6 +121,36 @@ func (s *Suite) TestMapFromEnviron(c *check.C) {
 	c.Check(mapFromEnviron(environ), check.DeepEquals, expected)
 }
 
+func (s *Suite) TestUpstreamErrors(c *check.C) {
+	type sec struct {
+		Field string
+	}
+	type config struct {
+		Sec sec
+	}
+	var err error
+	var cfg config
+	var r *strings.Reader
+	configEnvVars := map[string]string{
+		"SEC_FIELD": "set",
+	}
+
+	// Parser errors should be surfaced immediately without proceeding to
+	// overrides.
+	r = strings.NewReader("[sec1]\nfi eld = value")
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.Not(check.IsNil))
+	c.Check(cfg, check.DeepEquals, config{})
+
+	// Parser warnings (e.g. extra data) should be surfaced after
+	// proceeding, so that users can still wrap the call in
+	// gcfg.FatalOnly().
+	r = strings.NewReader("[sec1]\nother = value")
+	err = readWithMapInto(r, configEnvVars, "", &cfg)
+	c.Check(err, check.Not(check.IsNil))
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{"set"}})
+}
+
 func (s *Suite) TestEnvAndPrefixes(c *check.C) {
 	type sec struct {
 		Field string

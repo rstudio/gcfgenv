@@ -27,16 +27,21 @@ func mapFromEnviron(environ []string) map[string]string {
 }
 
 func readWithMapInto(r io.Reader, env map[string]string, prefix string, config interface{}) error {
-	err := gcfg.ReadInto(config, r)
-	if err != nil {
-		return err
+	var upstreamErr error
+	upstreamErr = gcfg.ReadInto(config, r)
+	if gcfg.FatalOnly(upstreamErr) != nil {
+		return upstreamErr
 	}
 	if prefix != "" && !strings.HasSuffix(prefix, "_") {
 		prefix = prefix + "_"
 	}
 	// We can assert that config is a pointer to a struct at this point.
 	ref := reflect.ValueOf(config).Elem()
-	return setGcfgWithEnvMap(ref, prefix, env)
+	err := setGcfgWithEnvMap(ref, prefix, env)
+	if err == nil {
+		return upstreamErr
+	}
+	return err
 }
 
 func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) error {
