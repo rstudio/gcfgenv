@@ -1,4 +1,4 @@
-module gcfgenv
+module github.com/rstudio/gcfgenv
 
 go 1.17
 
