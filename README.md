@@ -55,3 +55,7 @@ other-field = elephants
   possible to determine after the initial configuration file pass whether a
   value was defaulted, so resetting a field's default via environment variable
   could lead to surprising results.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See `LICENSE` for details.

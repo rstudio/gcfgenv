@@ -2,6 +2,10 @@ CGO_ENABLED = 0
 GO_LDFLAGS =
 GO_BUILD_ARGS = -v
 
+GOPATH = `go env GOPATH`
+ADDLICENSE = $(GOPATH)/bin/addlicense
+ADDLICENSE_ARGS = -v -s=only -l=apache -c "RStudio, PBC" -ignore 'coverage.html' -ignore '.github/**'
+
 all: build
 
 .PHONY: build
@@ -23,6 +27,14 @@ fmt:
 .PHONY: vet
 vet:
 	GO111MODULE=on go vet ./...
+
+.PHONY: check-license
+check-license:
+	GO111MODULE=on $(ADDLICENSE) $(ADDLICENSE_ARGS) -check .
+
+.PHONY: license
+license:
+	GO111MODULE=on $(ADDLICENSE) $(ADDLICENSE_ARGS) .
 
 .PHONY: clean
 clean:
