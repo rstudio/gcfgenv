@@ -1,6 +1,7 @@
 package gcfgenv
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -101,6 +102,65 @@ func (s *Suite) TestConversion(c *check.C) {
 				check.Commentf("test case %d", i))
 		}
 	}
+}
+
+func (s *Suite) TestMapFromEnviron(c *check.C) {
+	environ := []string{
+		"APPNAME_SEC_FIELD=geese",
+		"APPNAME_SEC_k1_FIELD=cats",
+		"APPNAME_SEC_k1_OTHER_FIELD=zebras,elephants",
+		// Something base64-encoded, which will have a trailing '='.
+		"APPNAME_SEC_k1_KEY=f4Q8N6PFcZKi9EK8NfvRbDgeUMkHyw9mXkMK/kPEi5Q=",
+	}
+	expected := map[string]string{
+		"APPNAME_SEC_FIELD":          "geese",
+		"APPNAME_SEC_k1_FIELD":       "cats",
+		"APPNAME_SEC_k1_OTHER_FIELD": "zebras,elephants",
+		"APPNAME_SEC_k1_KEY":         "f4Q8N6PFcZKi9EK8NfvRbDgeUMkHyw9mXkMK/kPEi5Q=",
+	}
+	c.Check(mapFromEnviron(environ), check.DeepEquals, expected)
+}
+
+func (s *Suite) TestEnvAndPrefixes(c *check.C) {
+	type sec struct {
+		Field string
+	}
+	type config struct {
+		Sec1 sec
+		Sec2 sec
+	}
+	var err error
+	var cfg config
+	var configFilledWithEnvVars config
+	var r *strings.Reader
+
+	os.Setenv("APPNAME_SEC1_FIELD", "set")
+	os.Setenv("SEC2_FIELD", "set")
+	defer func() {
+		os.Unsetenv("APPNAME_SEC1_FIELD")
+		os.Unsetenv("SEC2_FIELD")
+	}()
+
+	cfg = config{}
+	configFilledWithEnvVars = config{Sec2: sec{"set"}}
+	r = strings.NewReader("")
+	err = ReadWithEnvInto(r, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+
+	cfg = config{}
+	configFilledWithEnvVars = config{Sec1: sec{"set"}}
+	r = strings.NewReader("")
+	err = ReadWithEnvInto(r, "APPNAME", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+
+	cfg = config{}
+	configFilledWithEnvVars = config{Sec1: sec{"set"}}
+	r = strings.NewReader("")
+	err = ReadWithEnvInto(r, "APPNAME_", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
 }
 
 func (s *Suite) TestSections(c *check.C) {
