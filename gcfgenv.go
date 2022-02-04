@@ -1,6 +1,9 @@
 // Copyright 2022 RStudio, PBC
 // SPDX-License-Identifier: Apache-2.0
 
+// Package gcfgenv allows reading gcfg configurations (see
+// https://gopkg.in/gcfg.v1) that respect overrides specified in environment
+// variables.
 package gcfgenv
 
 import (
@@ -16,6 +19,9 @@ import (
 	"gopkg.in/gcfg.v1/types"
 )
 
+// ReadFileWithEnvInto reads the gcfg-formatted file at filename, injects any
+// overrides from the process's environment variables (prefixed with envPrefix),
+// and sets these values in the corresponding fields of config.
 func ReadFileWithEnvInto(filename string, envPrefix string, config interface{}) error {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -26,6 +32,9 @@ func ReadFileWithEnvInto(filename string, envPrefix string, config interface{}) 
 	return ReadWithEnvInto(f, envPrefix, config)
 }
 
+// ReadWithEnvInto reads gcfg-formatted data from r, injects any overrides from
+// the process's environment variables (prefixed with envPrefix), and sets these
+// values in the corresponding fields of config.
 func ReadWithEnvInto(r io.Reader, envPrefix string, config interface{}) error {
 	env := mapFromEnviron(os.Environ())
 	return readWithMapInto(r, env, envPrefix, config)
