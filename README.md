@@ -1,5 +1,7 @@
 # gcfgenv
 
+**This repository is a proof-of-concept meant to serve internal needs only.**
+
 `gcfgenv` is a Go package for configuring applications with environment
 variables in addition to their existing configuration files.
 
