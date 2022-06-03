@@ -403,8 +403,6 @@ f2 = dogs
 }
 
 func (s *Suite) TestGcfgTags(c *check.C) {
-	c.ExpectFailure("not yet implemented")
-
 	type sec1 struct {
 		F1 string `gcfg:"another-name"`
 	}
