@@ -86,13 +86,23 @@ func readWithMapInto(r io.Reader, env map[string]string, prefix string, config i
 	return err
 }
 
+func fieldToEnvVar(field reflect.StructField) string {
+	t := field.Tag.Get("gcfg")
+	if t != "" {
+		// we need to replace dashes with underscores for consistency
+		// with field.Name, which uses this convention automatically
+		return strings.ToUpper(strings.ReplaceAll(t, "-", "_"))
+	}
+	return strings.ToUpper(field.Name)
+}
+
 func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) error {
 	refType := ref.Type()
 	for i := 0; i < refType.NumField(); i++ {
 		sec := ref.Field(i)
 		secStructField := refType.Field(i)
 		secType := sec.Type()
-		secPrefix := prefix + strings.ToUpper(secStructField.Name)
+		secPrefix := prefix + fieldToEnvVar(secStructField)
 
 		if !sec.CanSet() || !secStructField.IsExported() {
 			continue
@@ -103,7 +113,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 			for j := 0; j < secType.NumField(); j++ {
 				f := sec.Field(j)
 				sf := secType.Field(j)
-				envVar := secPrefix + "_" + strings.ToUpper(sf.Name)
+				envVar := secPrefix + "_" + fieldToEnvVar(sf)
 				if !f.CanSet() || !sf.IsExported() {
 					continue
 				}
@@ -147,7 +157,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				for j := 0; j < subsecType.NumField(); j++ {
 					f := subsec.Field(j)
 					sf := subsecType.Field(j)
-					envVar := key + strings.ToUpper(sf.Name)
+					envVar := key + fieldToEnvVar(sf)
 					if !f.CanSet() || !sf.IsExported() {
 						continue
 					}
@@ -181,7 +191,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				if !sf.IsExported() {
 					continue
 				}
-				suf := "_" + strings.ToUpper(sf.Name)
+				suf := "_" + fieldToEnvVar(sf)
 				for e, v := range matchingEnv {
 					if !strings.HasSuffix(e, suf) {
 						continue
