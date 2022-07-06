@@ -1,5 +1,7 @@
 # gcfgenv
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/rstudio/gcfgenv.svg)](https://pkg.go.dev/github.com/rstudio/gcfgenv)
+
 **This repository is a proof-of-concept meant to serve internal needs only.**
 
 `gcfgenv` is a Go package for configuring applications with environment
