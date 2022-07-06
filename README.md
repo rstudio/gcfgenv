@@ -23,7 +23,9 @@ There are only two exported functions:
 Configuration fields are converted to environment variables using the follow
 rules:
 
-* Section and field names are converted to uppercase.
+* Section and field names (including those using [the `gcfg` struct
+  tag](https://pkg.go.dev/gopkg.in/gcfg.v1#hdr-Data_structure)) are converted to
+  uppercase.
 * Slice fields use `,` as a separator.
 * Dashes are converted to underscores.
 * Subsection names are left as-is.
