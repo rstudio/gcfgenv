@@ -332,25 +332,31 @@ f1 = cats
 
 [sec1 "k2"]
 f2 = dogs
+
+[sec1 "some- Rich"]
+f3 = 4
 `
 	configFilled := config{
 		Sec1: map[string]*sec{
-			"":   {F1: "geese", F2: "default"},
-			"k1": {F1: "cats", F2: "default"},
-			"k2": {F2: "dogs"},
+			"":           {F1: "geese", F2: "default"},
+			"k1":         {F1: "cats", F2: "default"},
+			"k2":         {F2: "dogs"},
+			"some- Rich": {F3: 4, F2: "default"},
 		},
 		Default_Sec1: sec{F2: "default"},
 	}
 	configEnvVars := map[string]string{
-		"SEC1_F2":    "set",
-		"SEC1_k1_F1": "set",
-		"SEC1_k2_F2": "set",
+		"SEC1_F2":            "set",
+		"SEC1_k1_F1":         "set",
+		"SEC1_k2_F2":         "set",
+		"SEC1_some- Rich_F3": "5",
 	}
 	configFilledWithEnvVars := config{
 		Sec1: map[string]*sec{
-			"":   {F1: "geese", F2: "set"},
-			"k1": {F1: "set", F2: "default"},
-			"k2": {F2: "set"},
+			"":           {F1: "geese", F2: "set"},
+			"k1":         {F1: "set", F2: "default"},
+			"k2":         {F2: "set"},
+			"some- Rich": {F3: 5, F2: "default"},
 		},
 		Default_Sec1: sec{F2: "default"},
 	}
