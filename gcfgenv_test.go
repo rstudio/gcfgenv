@@ -332,25 +332,49 @@ f1 = cats
 
 [sec1 "k2"]
 f2 = dogs
+
+[sec1 "env|overwrite- Rich"]
+f3 = 4
+
+[sec1 "env|overwrite-_Rich"]
+f3 = 5
+
+[sec1 "some very blank space"]
+f1 = three
 `
 	configFilled := config{
 		Sec1: map[string]*sec{
-			"":   {F1: "geese", F2: "default"},
-			"k1": {F1: "cats", F2: "default"},
-			"k2": {F2: "dogs"},
+			"":                      {F1: "geese", F2: "default"},
+			"k1":                    {F1: "cats", F2: "default"},
+			"k2":                    {F2: "dogs"},
+			"env|overwrite- Rich":   {F3: 4, F2: "default"},
+			"env|overwrite-_Rich":   {F3: 5, F2: "default"},
+			"some very blank space": {F1: "three", F2: "default"},
 		},
 		Default_Sec1: sec{F2: "default"},
 	}
 	configEnvVars := map[string]string{
-		"SEC1_F2":    "set",
-		"SEC1_k1_F1": "set",
-		"SEC1_k2_F2": "set",
+		"SEC1_F2":                       "set",
+		"SEC1_k1_F1":                    "set",
+		"SEC1_k2_F2":                    "set",
+		"SEC1_env|overwrite- Rich_F3":   "5",
+		"SEC1_env|overwrite-_Rich_F1":   "hello",
+		"SEC1_created- Rich_F1":         "another",
+		"SEC1_some very blank space_F1": "four",
+		// we do not parse the underscored variant as "whitespace" because
+		// of non-deterministic behavior it can cause because maps are unordered
+		"SEC1_some_very_blank_space_F1": "forty",
 	}
 	configFilledWithEnvVars := config{
 		Sec1: map[string]*sec{
-			"":   {F1: "geese", F2: "set"},
-			"k1": {F1: "set", F2: "default"},
-			"k2": {F2: "set"},
+			"":                      {F1: "geese", F2: "set"},
+			"k1":                    {F1: "set", F2: "default"},
+			"k2":                    {F2: "set"},
+			"env|overwrite- Rich":   {F3: 5, F2: "default"},
+			"env|overwrite-_Rich":   {F1: "hello", F2: "default", F3: 5},
+			"created- Rich":         {F1: "another", F2: "default"},
+			"some very blank space": {F1: "four", F2: "default"},
+			"some_very_blank_space": {F1: "forty", F2: "default"},
 		},
 		Default_Sec1: sec{F2: "default"},
 	}
