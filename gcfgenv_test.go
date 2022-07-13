@@ -437,6 +437,47 @@ another-name = value
 	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
 }
 
+func (s *Suite) TestSliceEnvVars(c *check.C) {
+	type sec struct {
+		Field []string
+	}
+	type config struct {
+		Sec1 sec
+		Sec2 sec
+		Sec3 sec
+	}
+
+	var err error
+	var cfg config
+	var configFilledWithEnvVars config
+	var r *strings.Reader
+
+	os.Setenv("APPNAME_SEC1_FIELD", "one,two,three")
+	os.Setenv("APPNAME_SEC2_FIELD", "a,b,c")
+	os.Setenv("APPNAME_SEC3_FIELD", "1,2,3")
+	defer func() {
+		os.Unsetenv("APPNAME_SEC1_FIELD")
+		os.Unsetenv("APPNAME_SEC2_FIELD")
+		os.Unsetenv("APPNAME_SEC3_FIELD")
+	}()
+
+	cfg = config{
+		// set a default
+		Sec2: sec{
+			[]string{"q", "r", "s"},
+		},
+	}
+	configFilledWithEnvVars = config{
+		Sec1: sec{[]string{"hi", "one", "two", "three"}},
+		Sec2: sec{[]string{"q", "r", "s", "a", "b", "c"}},
+		Sec3: sec{[]string{"1", "2", "3"}},
+	}
+	r = strings.NewReader("[Sec1]\nField=hi")
+	err = ReadWithEnvInto(r, "APPNAME", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+}
+
 func Test(t *testing.T) {
 	_ = check.Suite(&Suite{})
 	check.TestingT(t)
