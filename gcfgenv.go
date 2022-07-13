@@ -125,7 +125,11 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				if err != nil {
 					return err
 				}
-				f.Set(newRef)
+				if f.Kind() == reflect.Slice {
+					f.Set(reflect.AppendSlice(f, newRef))
+				} else {
+					f.Set(newRef)
+				}
 			}
 			continue
 		}
@@ -170,7 +174,11 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 					if err != nil {
 						return err
 					}
-					f.Set(newRef)
+					if f.Kind() == reflect.Slice {
+						f.Set(reflect.AppendSlice(f.Elem(), newRef))
+					} else {
+						f.Set(newRef)
+					}
 				}
 			}
 			if len(matchingEnv) == 0 {
@@ -212,7 +220,11 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 					if err != nil {
 						return err
 					}
-					f.Elem().Field(j).Set(newRef)
+					if f.Elem().Field(j).Kind() == reflect.Slice {
+						f.Elem().Field(j).Set(reflect.AppendSlice(f.Elem().Field(j).Elem(), newRef))
+					} else {
+						f.Elem().Field(j).Set(newRef)
+					}
 					// TODO: Does this have any unfortunate
 					// side-effects?
 					delete(matchingEnv, e)
