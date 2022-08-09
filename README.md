@@ -29,6 +29,7 @@ rules:
   tag](https://pkg.go.dev/gopkg.in/gcfg.v1#hdr-Data_structure)) are converted to
   uppercase.
 * Slice fields use `,` as a separator.
+* Consistent with the `gcfg` package, slices are appended rather than replaced.
 * Dashes are converted to underscores.
 * Subsection names are left as-is.
 
