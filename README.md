@@ -29,7 +29,8 @@ rules:
   tag](https://pkg.go.dev/gopkg.in/gcfg.v1#hdr-Data_structure)) are converted to
   uppercase.
 * Slice fields use `,` as a separator.
-* Consistent with the `gcfg` package, slices are appended rather than replaced.
+* Slice fields are appended to rather than replaced (as with the original `gcfg`
+  package).
 * Dashes are converted to underscores.
 * Subsection names are left as-is.
 
@@ -63,11 +64,12 @@ other-field = elephants
   value was defaulted, so resetting a field's default via environment variable
   could lead to surprising results.
 
-* Subsections with whitespace in the subsection heading (i.e. `[Section "Sub Section"]`) require
-  environment variable keys that have whitespace. This does not work in most shells or environments.
-  We recommend using `snake_case` or `kebab-case` in lieu of whitespace delimited subsection headings.
-  A whitespace substitute (i.e. `_` or `-`) is not implemented in environment variable parsing because it leads to
-  non-deterministic behavior or unwieldy complexity. Choose your subsection headers wisely.
+* Modifying subsections with whitespace in the heading (i.e. `[Section "Sub
+  Section"]`) requires using environment variables with whitespace, since any
+  form of automatic substitution (with e.g. `_` or `-`) would lead to ambiguity.
+  However, most shells and other tools do not handle whitespace in environment
+  variables well, so we recommend using `snake_case` or `kebab-case` in
+  subsection headings instead.
 
 ## Versioning
 
