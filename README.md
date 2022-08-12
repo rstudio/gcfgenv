@@ -62,6 +62,12 @@ other-field = elephants
   value was defaulted, so resetting a field's default via environment variable
   could lead to surprising results.
 
+* Subsections with whitespace in the subsection heading (i.e. `[Section "Sub Section"]`) require
+  environment variable keys that have whitespace. This does not work in most shells or environments.
+  We recommend using `snake_case` or `kebab-case` in lieu of whitespace delimited subsection headings.
+  A whitespace substitute (i.e. `_` or `-`) is not implemented in environment variable parsing because it leads to
+  non-deterministic behavior or unwieldy complexity. Choose your subsection headers wisely.
+
 ## Versioning
 
 `gcfgenv` follows semantic versioning.
