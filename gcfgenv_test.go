@@ -23,6 +23,27 @@ func (w *lowerString) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// StringSliceType is a slice type to test encoding.TextUnmarshaler behaviour.
+type StringSliceType []string
+
+func (ss *StringSliceType) Length() int {
+	return ss.Length()
+}
+
+func (ss *StringSliceType) Set(text string) error {
+	*ss = append(*ss, text)
+	return nil
+}
+
+func (ss *StringSliceType) UnmarshalText(text []byte) error {
+	*ss = append(*ss, string(text))
+	return nil
+}
+
+func (ss *StringSliceType) String() string {
+	return strings.Join(*ss, "|")
+}
+
 var lowerStringValue = lowerString("value")
 
 var conversionCases = []struct {
@@ -465,10 +486,14 @@ func (s *Suite) TestSliceEnvVars(c *check.C) {
 	type sec struct {
 		Field []string
 	}
+	type secAlt struct {
+		Custom StringSliceType
+	}
 	type config struct {
 		Sec1 sec
 		Sec2 sec
 		Sec3 sec
+		Sec4 secAlt
 	}
 
 	var err error
@@ -479,10 +504,12 @@ func (s *Suite) TestSliceEnvVars(c *check.C) {
 	os.Setenv("APPNAME_SEC1_FIELD", "one,two,three")
 	os.Setenv("APPNAME_SEC2_FIELD", "a,b,c")
 	os.Setenv("APPNAME_SEC3_FIELD", "1,2,3")
+	os.Setenv("APPNAME_SEC4_CUSTOM", "x,y")
 	defer func() {
 		os.Unsetenv("APPNAME_SEC1_FIELD")
 		os.Unsetenv("APPNAME_SEC2_FIELD")
 		os.Unsetenv("APPNAME_SEC3_FIELD")
+		os.Unsetenv("APPNAME_SEC4_CUSTOM")
 	}()
 
 	cfg = config{
@@ -495,11 +522,51 @@ func (s *Suite) TestSliceEnvVars(c *check.C) {
 		Sec1: sec{[]string{"hi", "one", "two", "three"}},
 		Sec2: sec{[]string{"q", "r", "s", "a", "b", "c"}},
 		Sec3: sec{[]string{"1", "2", "3"}},
+		Sec4: secAlt{StringSliceType{"x", "y"}},
 	}
 	r = strings.NewReader("[Sec1]\nField=hi")
 	err = ReadWithEnvInto(r, "APPNAME", &cfg)
 	c.Check(err, check.IsNil)
 	c.Check(cfg, check.DeepEquals, configFilledWithEnvVars)
+}
+
+func (s *Suite) TestSlicePointerEnvVars(c *check.C) {
+	type sec struct {
+		Custom *StringSliceType
+	}
+
+	type config struct {
+		Sec sec
+	}
+
+	var ptr = new(StringSliceType)
+	var cfg config
+	var r *strings.Reader
+	var err error
+
+	os.Setenv("APPNAME_SEC_CUSTOM", "x,y,z")
+	defer func() {
+		os.Unsetenv("APPNAME_SEC_CUSTOM")
+	}()
+
+	cfg = config{
+		Sec: sec{ptr},
+	}
+
+	err = ptr.UnmarshalText([]byte("a"))
+	c.Check(err, check.IsNil)
+	err = ptr.UnmarshalText([]byte("b"))
+	c.Check(err, check.IsNil)
+
+	r = strings.NewReader("")
+	err = ReadWithEnvInto(r, "APPNAME", &cfg)
+	c.Check(err, check.IsNil)
+
+	// It is noteworthy in this case that a,b are dropped
+	// because we replace the existing pointer with a new one.
+	c.Check(*cfg.Sec.Custom, check.HasLen, 3)
+	c.Check(cfg.Sec.Custom.String(), check.Equals, "x|y|z")
+	c.Check(*cfg.Sec.Custom, check.DeepEquals, StringSliceType{"x", "y", "z"})
 }
 
 func Test(t *testing.T) {
