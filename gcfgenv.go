@@ -247,16 +247,43 @@ func valFromEnvVar(t reflect.Type, env string) (reflect.Value, error) {
 	// that may have a method with a pointer receiver as well as pointers
 	// themselves.
 	if t.Kind() == reflect.Ptr {
+		// In this case we replace the existing pointer with a new one.
 		ptr := reflect.New(t.Elem())
 		unmarshaller, ok := ptr.Interface().(encoding.TextUnmarshaler)
 		if ok {
-			return ptr, unmarshaller.UnmarshalText([]byte(env))
+			// Slice types have to be unmarshalled per entry.
+			if ptr.Elem().Kind() == reflect.Slice {
+				parts := strings.Split(env, ",")
+				for i := range parts {
+					err := unmarshaller.UnmarshalText([]byte(parts[i]))
+					// Stop unmarshalling and return on an error.
+					if err != nil {
+						return ptr, err
+					}
+				}
+			} else {
+				// Otherwise just unmarshal the env var directly.
+				return ptr, unmarshaller.UnmarshalText([]byte(env))
+			}
 		}
 	} else {
 		ptr := reflect.New(t)
 		unmarshaller, ok := ptr.Interface().(encoding.TextUnmarshaler)
 		if ok {
-			return ptr.Elem(), unmarshaller.UnmarshalText([]byte(env))
+			// Slice types have to be unmarshalled per entry.
+			if t.Kind() == reflect.Slice {
+				parts := strings.Split(env, ",")
+				for i := range parts {
+					err := unmarshaller.UnmarshalText([]byte(parts[i]))
+					// Stop unmarshalling and return on an error.
+					if err != nil {
+						return ptr.Elem(), err
+					}
+				}
+			} else {
+				// Otherwise just unmarshal the env var directly.
+				return ptr.Elem(), unmarshaller.UnmarshalText([]byte(env))
+			}
 		}
 	}
 
