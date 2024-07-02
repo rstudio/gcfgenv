@@ -1,4 +1,4 @@
-// Copyright 2024 Posit, PBC
+// Copyright 2024 Posit Software, PBC
 // SPDX-License-Identifier: Apache-2.0
 
 package gcfgenv
