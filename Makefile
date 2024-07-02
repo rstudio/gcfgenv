@@ -4,7 +4,7 @@ GO_BUILD_ARGS ?= -v
 
 GOPATH := $(shell go env GOPATH)
 ADDLICENSE := $(GOPATH)/bin/addlicense
-ADDLICENSE_ARGS := -v -s=only -l=apache -c "Posit, PBC" -ignore 'coverage.html' -ignore '.github/**'
+ADDLICENSE_ARGS := -v -s=only -l=apache -c "Posit Software, PBC" -ignore 'coverage.html' -ignore '.github/**'
 
 .PHONY: all
 all: build
