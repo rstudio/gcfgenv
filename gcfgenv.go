@@ -1,4 +1,4 @@
-// Copyright 2022 RStudio, PBC
+// Copyright 2024 Posit Software, PBC
 // SPDX-License-Identifier: Apache-2.0
 
 // Package gcfgenv allows reading gcfg configurations (see
