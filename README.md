@@ -31,6 +31,11 @@ rules:
   package).
 * Dashes are converted to underscores.
 * Subsection names are left as-is.
+* Fields of an anonymous embedded struct are named as though they were declared
+  on the outer struct, matching how `gcfg` reads them from a file. The embedded
+  struct itself is not addressable by its type name, a field declared on the
+  outer struct hides a same-named embedded one, and two same-named fields
+  embedded at the same depth are both unreachable, as in Go.
 
 For example, the following environment variables (and global prefix `APPNAME_`):
 

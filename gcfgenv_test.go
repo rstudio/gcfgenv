@@ -569,6 +569,243 @@ func (s *Suite) TestSlicePointerEnvVars(c *check.C) {
 	c.Check(*cfg.Sec.Custom, check.DeepEquals, StringSliceType{"x", "y", "z"})
 }
 
+// base is embedded to check that the fields of an embedded struct are
+// addressable by environment variable, as they are in a configuration file.
+type base struct {
+	Issuer string
+	Scope  []string
+	Nested int
+}
+
+type outerBase struct {
+	base
+	Audience string
+}
+
+// definedString and friends exercise defined types whose underlying type is a
+// basic kind. A value of the underlying type is not assignable to them.
+type definedString string
+
+type definedInt int
+
+type definedBool bool
+
+func (s *Suite) TestEmbeddedStructs(c *check.C) {
+	type sec struct {
+		base
+		Audience string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	configString := `[sec]
+issuer = fromfile
+audience = fromfile
+`
+	// gcfg addresses an embedded struct's fields as though they were
+	// declared on the outer struct, so environment variables must too.
+	configEnvVars := map[string]string{
+		"SEC_ISSUER":   "set",
+		"SEC_NESTED":   "7",
+		"SEC_SCOPE":    "a,b",
+		"SEC_AUDIENCE": "set",
+		// The embedded struct is not addressable by its type name,
+		// matching gcfg, which reports that it cannot store data there.
+		"SEC_BASE": "notset",
+	}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, configString)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{
+		base:     base{Issuer: "fromfile"},
+		Audience: "fromfile",
+	}})
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(configString), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{
+		base:     base{Issuer: "set", Scope: []string{"a", "b"}, Nested: 7},
+		Audience: "set",
+	}})
+}
+
+func (s *Suite) TestEmbeddedStructsNested(c *check.C) {
+	// An embedded struct within an embedded struct is flattened all the way
+	// up.
+	type sec struct {
+		outerBase
+		Extra string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	configEnvVars := map[string]string{
+		"SEC_ISSUER":   "set",
+		"SEC_AUDIENCE": "set",
+		"SEC_EXTRA":    "set",
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{
+		outerBase: outerBase{base: base{Issuer: "set"}, Audience: "set"},
+		Extra:     "set",
+	}})
+}
+
+func (s *Suite) TestEmbeddedStructsShadowed(c *check.C) {
+	// A field declared on the outer struct hides the embedded one, as in Go
+	// and as in gcfg.
+	type sec struct {
+		base
+		Issuer string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	configEnvVars := map[string]string{"SEC_ISSUER": "set"}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, "[sec]\nissuer = fromfile\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Issuer, check.Equals, "fromfile")
+	c.Check(cfg.Sec.base.Issuer, check.Equals, "")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Issuer, check.Equals, "set")
+	c.Check(cfg.Sec.base.Issuer, check.Equals, "")
+}
+
+func (s *Suite) TestEmbeddedStructsAmbiguous(c *check.C) {
+	type otherBase struct {
+		Issuer string
+	}
+	// Two embedded structs at the same depth both declaring Issuer: the name
+	// is unreachable, as it is in Go.
+	type sec struct {
+		base
+		otherBase
+	}
+	type config struct {
+		Sec sec
+	}
+
+	configEnvVars := map[string]string{"SEC_ISSUER": "notset"}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.base.Issuer, check.Equals, "")
+	c.Check(cfg.Sec.otherBase.Issuer, check.Equals, "")
+}
+
+func (s *Suite) TestEmbeddedSubsections(c *check.C) {
+	type sec struct {
+		base
+		Audience string
+	}
+	type config struct {
+		Sec map[string]*sec
+	}
+
+	// k1 already exists in the file; k2 is created from the environment
+	// alone. Both branches have to flatten the embedded struct.
+	configString := `[sec "k1"]
+audience = fromfile
+`
+	configEnvVars := map[string]string{
+		"SEC_k1_ISSUER": "set",
+		"SEC_k1_SCOPE":  "a,b",
+		"SEC_k2_ISSUER": "set",
+		"SEC_k2_SCOPE":  "c",
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(configString), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: map[string]*sec{
+		"k1": {
+			base:     base{Issuer: "set", Scope: []string{"a", "b"}},
+			Audience: "fromfile",
+		},
+		"k2": {base: base{Issuer: "set", Scope: []string{"c"}}},
+	}})
+}
+
+func (s *Suite) TestSubsectionSlices(c *check.C) {
+	// A slice property of a subsection, in both map branches. Setting one
+	// used to panic in reflect.
+	type sec struct {
+		Field []string
+	}
+	type config struct {
+		Sec map[string]*sec
+	}
+
+	configString := `[sec "k1"]
+field = fromfile
+`
+	configEnvVars := map[string]string{
+		"SEC_k1_FIELD": "a,b",
+		"SEC_k2_FIELD": "c,d",
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(configString), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: map[string]*sec{
+		// As elsewhere, environment values append to the file's.
+		"k1": {Field: []string{"fromfile", "a", "b"}},
+		"k2": {Field: []string{"c", "d"}},
+	}})
+}
+
+func (s *Suite) TestDefinedTypes(c *check.C) {
+	// Defined types with a basic underlying kind used to panic in
+	// reflect.Set, because the parsed value had the underlying type.
+	type sec struct {
+		Str  definedString
+		Num  definedInt
+		Flag definedBool
+		List []definedString
+	}
+	type config struct {
+		Sec map[string]*sec
+		Alt sec
+	}
+
+	configEnvVars := map[string]string{
+		"ALT_STR":     "set",
+		"ALT_NUM":     "7",
+		"ALT_FLAG":    "true",
+		"ALT_LIST":    "a,b",
+		"SEC_k1_STR":  "set",
+		"SEC_k1_LIST": "c",
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Alt, check.DeepEquals, sec{
+		Str:  "set",
+		Num:  7,
+		Flag: true,
+		List: []definedString{"a", "b"},
+	})
+	c.Check(cfg.Sec["k1"], check.DeepEquals, &sec{
+		Str:  "set",
+		List: []definedString{"c"},
+	})
+}
+
 func Test(t *testing.T) {
 	_ = check.Suite(&Suite{})
 	check.TestingT(t)
