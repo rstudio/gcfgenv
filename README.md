@@ -80,6 +80,29 @@ other-field = elephants
   variables well, so we recommend using `snake_case` or `kebab-case` in
   subsection headings instead.
 
+The following are known places where an environment variable and a file entry
+still disagree. None of them has a caller today, and each needs a piece of
+`gcfg`'s setter machinery that this package does not reproduce:
+
+* A `big.Int` field is parsed by `math/big`, which infers the base from the
+  literal, rather than by `gcfg`'s decimal-and-hexadecimal rule. `0777` is 511
+  from an environment variable and 777 from a file.
+
+* A `uintptr` field cannot be set at all, and the attempt fails the whole read
+  as an unsupported type, though `gcfg` reads one from a file.
+
+* A property or section promoted through an *embedded pointer* to a struct is
+  not reachable, because traversing one would panic when the pointer is nil.
+
+* When two fields compete for a name, this package resolves the competition on
+  the environment variable name, whereas `gcfg` resolves it on the Go field
+  name. Two fields whose Go names collide but whose `gcfg` tags do not are
+  refused by `gcfg` and settable here.
+
+* The `Default_<Section>` struct is matched by Go field name, where `gcfg` folds
+  `default-<section name>`. A section renamed by a `gcfg` tag therefore takes
+  its defaults from one and not the other.
+
 ## Versioning
 
 `gcfgenv` follows semantic versioning.

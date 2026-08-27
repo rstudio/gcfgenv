@@ -939,6 +939,55 @@ func (s *Suite) TestUnexportedEmbeddedDoesNotCancelASubsectionField(c *check.C) 
 	c.Check(cfg.Sec["k"].Base, check.Equals, "set")
 }
 
+func (s *Suite) TestGcfgTagOptions(c *check.C) {
+	// A gcfg tag may carry options after the name, as in
+	// `gcfg:"the-name,int=dho"`. Only the part before the comma names the
+	// field: including the rest produced a name no environment variable can
+	// have, so the field could not be set at all. The option itself has to be
+	// honoured too, or the same field would read differently from a file.
+	type sec struct {
+		Numbered int `gcfg:"the-number,int=dho"`
+		Optioned int `gcfg:",int=dho"`
+		Plain    int
+	}
+	type config struct {
+		Sec sec
+	}
+
+	byFile := config{}
+	err := gcfg.ReadStringInto(&byFile, "[sec]\nthe-number = 0777\noptioned = 0777\nplain = 0777\n")
+	c.Check(err, check.IsNil)
+	c.Check(byFile.Sec, check.DeepEquals, sec{Numbered: 0777, Optioned: 0777, Plain: 777})
+
+	byEnv := config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_THE_NUMBER": "0777",
+		"SEC_OPTIONED":   "0777",
+		"SEC_PLAIN":      "0777",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Check(byEnv.Sec, check.DeepEquals, byFile.Sec)
+}
+
+func (s *Suite) TestSubsectionKeyEndingInAPropertyName(c *check.C) {
+	// The key is the variable with the property's name trimmed off the end.
+	// Replacing the first match instead would take a bite out of the key.
+	type subsec struct {
+		URL string
+	}
+	type config struct {
+		Sec map[string]*subsec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""),
+		map[string]string{"SEC_PROD_URL_v2_URL": "https://example.com"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Assert(cfg.Sec, check.HasLen, 1)
+	c.Assert(cfg.Sec["PROD_URL_v2"], check.NotNil)
+	c.Check(cfg.Sec["PROD_URL_v2"].URL, check.Equals, "https://example.com")
+}
+
 func (s *Suite) TestEmbeddedSections(c *check.C) {
 	// A section declared on an embedded struct. gcfg resolves a section name
 	// by promotion, so it is readable from a file and has to be reachable

@@ -11,6 +11,7 @@ import (
 	"encoding"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"reflect"
 	"strings"
@@ -87,12 +88,18 @@ func readWithMapInto(r io.Reader, env map[string]string, prefix string, config i
 }
 
 func fieldToEnvVar(field reflect.StructField) string {
-	t := field.Tag.Get("gcfg")
-	if t != "" {
+	// Everything after the first comma is an option such as `int=dho`, not
+	// part of the name. Including it produced a name no environment variable
+	// can have, so a field with an option was unreachable while gcfg read it
+	// from a file quite happily.
+	name, _, _ := strings.Cut(field.Tag.Get("gcfg"), ",")
+	if name != "" {
 		// we need to replace dashes with underscores for consistency
 		// with field.Name, which uses this convention automatically
-		return strings.ToUpper(strings.ReplaceAll(t, "-", "_"))
+		return strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 	}
+	// A tag that carries only options, such as `gcfg:",int=dho"`, leaves the
+	// field named after itself.
 	return strings.ToUpper(field.Name)
 }
 
@@ -103,6 +110,8 @@ type flatField struct {
 	name string
 	// index is the field index path, for reflect.Value.FieldByIndex.
 	index []int
+	// intMode is the field's own `int=` override, or zero for none.
+	intMode types.IntMode
 }
 
 // flatFields returns the fields of a struct that an environment variable can
@@ -140,7 +149,7 @@ func flatFields(t reflect.Type) []flatField {
 		found, ok := byName[name]
 		if !ok {
 			byName[name] = &candidate{
-				field: flatField{name: name, index: index},
+				field: flatField{name: name, index: index, intMode: intModeFromTag(sf)},
 				depth: depth,
 				count: 1,
 			}
@@ -149,7 +158,7 @@ func flatFields(t reflect.Type) []flatField {
 		}
 		switch {
 		case depth < found.depth:
-			found.field = flatField{name: name, index: index}
+			found.field = flatField{name: name, index: index, intMode: intModeFromTag(sf)}
 			found.depth = depth
 			found.count = 1
 		case depth == found.depth:
@@ -198,22 +207,59 @@ func flatFields(t reflect.Type) []flatField {
 // default: the builtin integer types take decimal and hexadecimal, and a defined
 // type such as `type Mode int` also takes octal. Without this a leading zero
 // means one thing in a file and another in an environment variable.
-// gcfg makes one further distinction that does not arise here: it leaves
-// uintptr out of its table, so uintptr takes octal too. valFromEnvVar has no
-// uintptr case at all, so such a field already fails as an unsupported type.
-// Anyone adding one should give it octal here as well.
-func intMode(t reflect.Type) types.IntMode {
-	// A builtin type has no package to be defined in.
-	if t.PkgPath() == "" {
-		return types.Dec | types.Hex
+// intModesByType mirrors gcfg's own table. Anything absent from it, including
+// uintptr and any defined type, also accepts octal.
+var intModesByType = map[reflect.Type]types.IntMode{
+	reflect.TypeOf(int(0)):    types.Dec | types.Hex,
+	reflect.TypeOf(int8(0)):   types.Dec | types.Hex,
+	reflect.TypeOf(int16(0)):  types.Dec | types.Hex,
+	reflect.TypeOf(int32(0)):  types.Dec | types.Hex,
+	reflect.TypeOf(int64(0)):  types.Dec | types.Hex,
+	reflect.TypeOf(uint(0)):   types.Dec | types.Hex,
+	reflect.TypeOf(uint8(0)):  types.Dec | types.Hex,
+	reflect.TypeOf(uint16(0)): types.Dec | types.Hex,
+	reflect.TypeOf(uint32(0)): types.Dec | types.Hex,
+	reflect.TypeOf(uint64(0)): types.Dec | types.Hex,
+	reflect.TypeOf(big.Int{}): types.Dec | types.Hex,
+}
+
+// intModeDefault reports the integer bases to accept for t when the field does
+// not say. Without this a leading zero means one thing in a file and another in
+// an environment variable.
+func intModeDefault(t reflect.Type) types.IntMode {
+	if m, ok := intModesByType[t]; ok {
+		return m
 	}
 	return types.Dec | types.Hex | types.Oct
 }
 
+// intModeFromTag reads gcfg's per-field override, as in `gcfg:"name,int=dho"`.
+// It reports zero when the field does not set one.
+func intModeFromTag(field reflect.StructField) types.IntMode {
+	var m types.IntMode
+	parts := strings.Split(field.Tag.Get("gcfg"), ",")
+	for _, part := range parts[1:] {
+		mode, ok := strings.CutPrefix(part, "int=")
+		if !ok {
+			continue
+		}
+		if strings.ContainsAny(mode, "dD") {
+			m |= types.Dec
+		}
+		if strings.ContainsAny(mode, "hH") {
+			m |= types.Hex
+		}
+		if strings.ContainsAny(mode, "oO") {
+			m |= types.Oct
+		}
+	}
+	return m
+}
+
 // setField applies an environment variable's value to a single field. Slices
 // append, matching gcfg's handling of a variable repeated in a file.
-func setField(f reflect.Value, val string) error {
-	newRef, err := valFromEnvVar(f.Type(), val)
+func setField(f reflect.Value, val string, mode types.IntMode) error {
+	newRef, err := valFromEnvVarWithMode(f.Type(), val, mode)
 	if err != nil {
 		return err
 	}
@@ -252,7 +298,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				if !found {
 					continue
 				}
-				if err := setField(f, val); err != nil {
+				if err := setField(f, val, ff.intMode); err != nil {
 					return err
 				}
 			}
@@ -297,7 +343,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 						continue
 					}
 					delete(matchingEnv, envVar)
-					if err := setField(f, val); err != nil {
+					if err := setField(f, val, ff.intMode); err != nil {
 						return err
 					}
 				}
@@ -321,7 +367,11 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 					if !strings.HasSuffix(e, suf) {
 						continue
 					}
-					k := strings.Replace(e, suf, "", 1)
+					// Trim, rather than replace the first match:
+					// a key that itself contains the property's
+					// name would otherwise lose the wrong part
+					// of itself.
+					k := strings.TrimSuffix(e, suf)
 					key := reflect.ValueOf(k)
 					if sec.IsNil() {
 						m := reflect.MakeMap(sec.Type())
@@ -333,7 +383,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 						f.Elem().Set(defaults)
 						sec.SetMapIndex(key, f)
 					}
-					if err := setField(f.Elem().FieldByIndex(ff.index), v); err != nil {
+					if err := setField(f.Elem().FieldByIndex(ff.index), v, ff.intMode); err != nil {
 						return err
 					}
 					// TODO: Does this have any unfortunate
@@ -352,7 +402,22 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 }
 
 func valFromEnvVar(t reflect.Type, env string) (reflect.Value, error) {
+	return valFromEnvVarWithMode(t, env, 0)
+}
+
+// valFromEnvVarWithMode converts env to a value of type t. A non-zero tagMode is
+// the field's own `int=` override, which takes precedence over the default for
+// the type being parsed. It is carried through pointers and slices unchanged, so
+// that the default is resolved against the element type rather than the
+// container's.
+func valFromEnvVarWithMode(t reflect.Type, env string, tagMode types.IntMode) (reflect.Value, error) {
 	kind := t.Kind()
+	mode := func() types.IntMode {
+		if tagMode != 0 {
+			return tagMode
+		}
+		return intModeDefault(t)
+	}
 
 	// Try encoding.TextUnmarshaler first. We need to handle both values
 	// that may have a method with a pointer receiver as well as pointers
@@ -416,43 +481,43 @@ func valFromEnvVar(t reflect.Type, env string) (reflect.Value, error) {
 		return reflect.ValueOf(b).Convert(t), err
 	case reflect.Int:
 		var i int
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Int8:
 		var i int8
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Int16:
 		var i int16
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Int32:
 		var i int32
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Int64:
 		var i int64
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint:
 		var i uint
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint8:
 		var i uint8
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint16:
 		var i uint16
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint32:
 		var i uint32
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint64:
 		var i uint64
-		err := types.ParseInt(&i, env, intMode(t))
+		err := types.ParseInt(&i, env, mode())
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Float32:
 		var f float32

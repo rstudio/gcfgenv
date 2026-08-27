@@ -67,6 +67,19 @@ type parityEmbeddedSections struct {
 	Logging paritySection
 }
 
+// parityTagOptions exercises a gcfg tag carrying options, which both names the
+// field and changes how its value is parsed.
+type parityTagOptions struct {
+	Numbered int `gcfg:"the-number,int=dho"`
+	Optioned int `gcfg:",int=dho"`
+	Plain    int
+}
+
+type parityTagOptionsSub struct {
+	URL      string
+	Numbered int `gcfg:"the-number,int=dho"`
+}
+
 // parityShapes are whole configuration structs, each exercising one shape.
 var parityShapes = []interface{}{
 	// A plain section with an exported embedded struct.
@@ -118,6 +131,11 @@ var parityShapes = []interface{}{
 		parityEmbeddedSections
 		ParityEmbeddedSections paritySection
 	}{},
+	// gcfg tags carrying options, in a section and in a subsection.
+	&struct{ Sec parityTagOptions }{},
+	&struct {
+		Sec map[string]*parityTagOptionsSub
+	}{},
 }
 
 // parityValues are tried in order; the first one gcfg accepts is the one
@@ -125,8 +143,10 @@ var parityShapes = []interface{}{
 // merely because the value did not suit its type.
 var parityValues = []string{"parityvalue", "7", "true"}
 
-// parityKeys are the subsection names to try for a map-valued section.
-var parityKeys = []string{"k1"}
+// parityKeys are the subsection names to try for a map-valued section. One of
+// them ends in a property name, which is how a key gets mangled if the suffix is
+// trimmed carelessly.
+var parityKeys = []string{"k1", "PROD_URL_v2"}
 
 func (s *Suite) TestParityWithGcfgAcrossShapes(c *check.C) {
 	checked := 0
@@ -223,7 +243,9 @@ func parityNames(t reflect.Type) []string {
 	walk = func(st reflect.Type) {
 		for i := 0; i < st.NumField(); i++ {
 			sf := st.Field(i)
-			if tag := sf.Tag.Get("gcfg"); tag != "" {
+			// Only the part before the first comma names the field;
+			// the rest are options such as `int=dho`.
+			if tag, _, _ := strings.Cut(sf.Tag.Get("gcfg"), ","); tag != "" {
 				add(tag)
 			}
 			add(sf.Name)
