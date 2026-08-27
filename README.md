@@ -31,17 +31,14 @@ rules:
   package).
 * Dashes are converted to underscores.
 * Subsection names are left as-is.
-* Anonymous embedded structs are flattened, matching how `gcfg` reads them from
-  a file. Both a section and a field can be declared on an embedded struct and
-  named as though it had been declared on the outer one. An exported embedded
-  struct is *also* addressable by its own type name, which is what makes an
-  embedded `time.Time` usable; embedding an unexported type is the exception,
-  since the field itself is not settable, so only its promoted fields can be
-  reached.
-* Where two fields compete for one name, the name resolves as it does in Go: a
-  field at a shallower depth wins, and otherwise neither is reachable. This
-  applies to a `gcfg` tag that collides with a sibling field's name as well as
-  to embedding.
+* Anonymous embedded structs are flattened, as in `gcfg`. A section or field
+  declared on an embedded struct is named as though it were declared on the
+  outer struct. An exported embedded struct is also addressable by its type
+  name; an unexported one is reachable only through its fields.
+* Where two names compete, the shallower wins, and otherwise neither is
+  reachable, as in Go.
+* Only the part of a `gcfg` tag before the first comma names the field. Options
+  after it, such as `int=dho`, are honored.
 
 For example, the following environment variables (and global prefix `APPNAME_`):
 
@@ -80,28 +77,22 @@ other-field = elephants
   variables well, so we recommend using `snake_case` or `kebab-case` in
   subsection headings instead.
 
-The following are known places where an environment variable and a file entry
-still disagree. None of them has a caller today, and each needs a piece of
-`gcfg`'s setter machinery that this package does not reproduce:
+Known cases where an environment variable and a file entry disagree:
 
-* A `big.Int` field is parsed by `math/big`, which infers the base from the
-  literal, rather than by `gcfg`'s decimal-and-hexadecimal rule. `0777` is 511
-  from an environment variable and 777 from a file.
+* A `big.Int` field infers its base, so `0777` is 511 from an environment
+  variable and 777 from a file.
 
-* A `uintptr` field cannot be set at all, and the attempt fails the whole read
-  as an unsupported type, though `gcfg` reads one from a file.
+* A `uintptr` field cannot be set, and the attempt fails the read.
 
-* A property or section promoted through an *embedded pointer* to a struct is
-  not reachable, because traversing one would panic when the pointer is nil.
+* A property or section promoted through an embedded pointer is not reachable.
 
-* When two fields compete for a name, this package resolves the competition on
-  the environment variable name, whereas `gcfg` resolves it on the Go field
-  name. Two fields whose Go names collide but whose `gcfg` tags do not are
-  refused by `gcfg` and settable here.
+* Competing names are resolved on the environment variable name rather than the
+  Go field name, so two fields whose Go names collide but whose tags do not are
+  settable here and refused by `gcfg`.
 
-* The `Default_<Section>` struct is matched by Go field name, where `gcfg` folds
-  `default-<section name>`. A section renamed by a `gcfg` tag therefore takes
-  its defaults from one and not the other.
+* `Default_<Section>` is matched by Go field name, where `gcfg` folds
+  `default-<section name>`. A section renamed by a tag takes its defaults from
+  one and not the other.
 
 ## Versioning
 
