@@ -96,28 +96,34 @@ func fieldToEnvVar(field reflect.StructField) string {
 	return strings.ToUpper(field.Name)
 }
 
-// flatField describes one settable property of a section, after flattening
-// anonymous embedded structs.
+// flatField describes one field addressable by environment variable, after
+// flattening anonymous embedded structs.
 type flatField struct {
-	// name is the environment variable component for this property.
+	// name is the environment variable component for this field.
 	name string
 	// index is the field index path, for reflect.Value.FieldByIndex.
 	index []int
-	// typ is the property's type.
-	typ reflect.Type
 }
 
-// flatFields returns the properties of a section struct, flattening anonymous
-// embedded structs. gcfg addresses the fields of an embedded struct as though
-// they had been declared on the outer struct -- an embedded struct is not
-// addressable by its own type name, even when it implements
-// encoding.TextUnmarshaler -- so environment variables have to do the same, or
-// a property that the configuration file exposes normally would be silently
-// unreachable.
+// flatFields returns the fields of a struct that an environment variable can
+// name, flattening anonymous embedded structs.
+//
+// gcfg reaches an embedded struct two ways, and so do we:
+//
+//   - Its fields are addressable as though they had been declared on the outer
+//     struct. Without this, a property the configuration file exposes normally
+//     is silently unreachable.
+//   - The embedded struct itself is addressable by its type name, which is
+//     useful when its type can be parsed from text, as with an embedded
+//     time.Time. Embedding an unexported type is the exception: gcfg requires
+//     the field to be settable, and reflect refuses for an unexported embedded
+//     field, so only its promoted fields can be reached.
 //
 // Shadowing follows Go's promotion rules: a field at a shallower depth hides a
 // same-named field at a deeper one, and two same-named fields at the same depth
-// are both unreachable.
+// are both unreachable. That applies to a name collision within a single struct
+// too, matching gcfg, which reports such a name as unstorable rather than
+// picking one of them.
 func flatFields(t reflect.Type) []flatField {
 	type candidate struct {
 		field flatField
@@ -129,41 +135,48 @@ func flatFields(t reflect.Type) []flatField {
 	byName := make(map[string]*candidate)
 	var order []string
 
+	add := func(sf reflect.StructField, index []int, depth int) {
+		name := fieldToEnvVar(sf)
+		found, ok := byName[name]
+		if !ok {
+			byName[name] = &candidate{
+				field: flatField{name: name, index: index},
+				depth: depth,
+				count: 1,
+			}
+			order = append(order, name)
+			return
+		}
+		switch {
+		case depth < found.depth:
+			found.field = flatField{name: name, index: index}
+			found.depth = depth
+			found.count = 1
+		case depth == found.depth:
+			found.count++
+		}
+	}
+
 	var walk func(reflect.Type, []int, int)
 	walk = func(st reflect.Type, prefix []int, depth int) {
 		for i := 0; i < st.NumField(); i++ {
 			sf := st.Field(i)
 			index := append(append(make([]int, 0, len(prefix)+1), prefix...), i)
-			// Embedding an unexported type gives the field an
-			// unexported name, but its own exported fields are still
-			// settable through it, and gcfg sets them, so recurse
-			// before rejecting unexported fields.
 			if sf.Anonymous && sf.Type.Kind() == reflect.Struct {
+				// The embedded struct itself, for a type that can
+				// be parsed from text. An unexported embedded
+				// field is not settable, so this is skipped later
+				// by CanSet rather than here.
+				add(sf, index, depth)
+				// Then its own fields, one level deeper, so that
+				// the outer struct's fields shadow them.
 				walk(sf.Type, index, depth+1)
 				continue
 			}
 			if !sf.IsExported() {
 				continue
 			}
-			name := fieldToEnvVar(sf)
-			found, ok := byName[name]
-			if !ok {
-				byName[name] = &candidate{
-					field: flatField{name: name, index: index, typ: sf.Type},
-					depth: depth,
-					count: 1,
-				}
-				order = append(order, name)
-				continue
-			}
-			switch {
-			case depth < found.depth:
-				found.field = flatField{name: name, index: index, typ: sf.Type}
-				found.depth = depth
-				found.count = 1
-			case depth == found.depth:
-				found.count++
-			}
+			add(sf, index, depth)
 		}
 	}
 	walk(t, nil, 0)
@@ -175,6 +188,18 @@ func flatFields(t reflect.Type) []flatField {
 		}
 	}
 	return out
+}
+
+// intMode reports the integer bases to accept for t, mirroring gcfg's own
+// default: the builtin integer types take decimal and hexadecimal, and a defined
+// type such as `type Mode int` also takes octal. Without this a leading zero
+// means one thing in a file and another in an environment variable.
+func intMode(t reflect.Type) types.IntMode {
+	// A builtin type has no package to be defined in.
+	if t.PkgPath() == "" {
+		return types.Dec | types.Hex
+	}
+	return types.Dec | types.Hex | types.Oct
 }
 
 // setField applies an environment variable's value to a single field. Slices
@@ -194,13 +219,17 @@ func setField(f reflect.Value, val string) error {
 
 func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) error {
 	refType := ref.Type()
-	for i := 0; i < refType.NumField(); i++ {
-		sec := ref.Field(i)
-		secStructField := refType.Field(i)
+	// Sections are flattened out of embedded structs for the same reason
+	// their properties are: gcfg resolves a section name by promotion, so a
+	// section declared on an embedded struct is readable from a file and
+	// would otherwise be unreachable from the environment.
+	for _, sf := range flatFields(refType) {
+		sec := ref.FieldByIndex(sf.index)
+		secStructField := refType.FieldByIndex(sf.index)
 		secType := sec.Type()
-		secPrefix := prefix + fieldToEnvVar(secStructField)
+		secPrefix := prefix + sf.name
 
-		if !sec.CanSet() || !secStructField.IsExported() {
+		if !sec.CanSet() {
 			continue
 		}
 
@@ -223,6 +252,9 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 		}
 		if sec.Kind() == reflect.Map {
 			subsecType := secType.Elem().Elem()
+			// Fixed for the whole section, so it is resolved once
+			// rather than per subsection key.
+			subsecFields := flatFields(subsecType)
 			// We don't know in advance what the subsections might
 			// be named -- or if they will be present in the
 			// existing map.
@@ -246,7 +278,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 					key = ""
 				}
 				subsec := iter.Value().Elem()
-				for _, ff := range flatFields(subsecType) {
+				for _, ff := range subsecFields {
 					f := subsec.FieldByIndex(ff.index)
 					envVar := key + ff.name
 					if !f.CanSet() {
@@ -275,7 +307,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 			if defaults == (reflect.Value{}) {
 				defaults = reflect.Zero(subsecType)
 			}
-			for _, ff := range flatFields(subsecType) {
+			for _, ff := range subsecFields {
 				suf := "_" + ff.name
 				for e, v := range matchingEnv {
 					if !strings.HasSuffix(e, suf) {
@@ -376,43 +408,43 @@ func valFromEnvVar(t reflect.Type, env string) (reflect.Value, error) {
 		return reflect.ValueOf(b).Convert(t), err
 	case reflect.Int:
 		var i int
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Int8:
 		var i int8
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Int16:
 		var i int16
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Int32:
 		var i int32
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Int64:
 		var i int64
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint:
 		var i uint
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint8:
 		var i uint8
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint16:
 		var i uint16
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint32:
 		var i uint32
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Uint64:
 		var i uint64
-		err := types.ParseInt(&i, env, types.Dec|types.Hex)
+		err := types.ParseInt(&i, env, intMode(t))
 		return reflect.ValueOf(i).Convert(t), err
 	case reflect.Float32:
 		var f float32

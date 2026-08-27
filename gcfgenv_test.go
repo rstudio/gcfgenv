@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/check.v1"
 	"gopkg.in/gcfg.v1"
@@ -804,6 +805,129 @@ func (s *Suite) TestDefinedTypes(c *check.C) {
 		Str:  "set",
 		List: []definedString{"c"},
 	})
+}
+
+func (s *Suite) TestEmbeddedStructByTypeName(c *check.C) {
+	// An exported embedded struct is addressable by its type name as well as
+	// through its promoted fields, which is what makes an embedded time.Time
+	// usable. gcfg accepts both, so we do too.
+	type sec struct {
+		time.Time
+		Other string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	stamp := "2020-01-02T03:04:05Z"
+	want, err := time.Parse(time.RFC3339, stamp)
+	c.Assert(err, check.IsNil)
+
+	cfg := config{}
+	err = gcfg.ReadStringInto(&cfg, "[sec]\ntime = "+stamp+"\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Time.Equal(want), check.Equals, true)
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"SEC_TIME": stamp}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Time.Equal(want), check.Equals, true)
+}
+
+func (s *Suite) TestEmbeddedUnexportedTypeNotAddressableByName(c *check.C) {
+	// The exception: embedding an unexported type leaves the field itself
+	// unsettable, so only its promoted fields can be reached. gcfg agrees,
+	// because it requires the field to be settable.
+	type sec struct {
+		base
+		Audience string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), map[string]string{"SEC_BASE": "notset"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{})
+}
+
+func (s *Suite) TestEmbeddedSections(c *check.C) {
+	// A section declared on an embedded struct. gcfg resolves a section name
+	// by promotion, so it is readable from a file and has to be reachable
+	// from the environment as well.
+	type logging struct {
+		Level string
+	}
+	type Common struct {
+		Logging logging
+	}
+	type config struct {
+		Common
+		Server logging
+	}
+
+	configString := "[logging]\nlevel = fromfile\n"
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, configString)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Logging.Level, check.Equals, "fromfile")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"LOGGING_LEVEL": "set",
+		"SERVER_LEVEL":  "set",
+	}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Logging.Level, check.Equals, "set")
+	c.Check(cfg.Server.Level, check.Equals, "set")
+}
+
+func (s *Suite) TestDefinedIntUsesTheSameBasesAsGcfg(c *check.C) {
+	// gcfg accepts octal for a defined integer type but not for a builtin
+	// one, so a leading zero has to mean the same thing in a file and in an
+	// environment variable.
+	type octInt int
+	type sec struct {
+		Defined octInt
+		Builtin int
+	}
+	type config struct {
+		Sec sec
+	}
+
+	byFile := config{}
+	err := gcfg.ReadStringInto(&byFile, "[sec]\ndefined = 0755\nbuiltin = 0755\n")
+	c.Check(err, check.IsNil)
+	c.Check(byFile.Sec.Defined, check.Equals, octInt(0755))
+	c.Check(byFile.Sec.Builtin, check.Equals, 755)
+
+	byEnv := config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_DEFINED": "0755",
+		"SEC_BUILTIN": "0755",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Check(byEnv.Sec, check.DeepEquals, byFile.Sec)
+}
+
+func (s *Suite) TestNameCollisionWithinOneStruct(c *check.C) {
+	// Two fields of one struct that map to the same name cancel each other,
+	// as they do in gcfg, which reports the name as unstorable rather than
+	// picking one.
+	type sec struct {
+		A string `gcfg:"x"`
+		X string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), map[string]string{"SEC_X": "notset"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{})
 }
 
 func Test(t *testing.T) {

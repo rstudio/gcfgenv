@@ -31,11 +31,17 @@ rules:
   package).
 * Dashes are converted to underscores.
 * Subsection names are left as-is.
-* Fields of an anonymous embedded struct are named as though they were declared
-  on the outer struct, matching how `gcfg` reads them from a file. The embedded
-  struct itself is not addressable by its type name, a field declared on the
-  outer struct hides a same-named embedded one, and two same-named fields
-  embedded at the same depth are both unreachable, as in Go.
+* Anonymous embedded structs are flattened, matching how `gcfg` reads them from
+  a file. Both a section and a field can be declared on an embedded struct and
+  named as though it had been declared on the outer one. An exported embedded
+  struct is *also* addressable by its own type name, which is what makes an
+  embedded `time.Time` usable; embedding an unexported type is the exception,
+  since the field itself is not settable, so only its promoted fields can be
+  reached.
+* Where two fields compete for one name, the name resolves as it does in Go: a
+  field at a shallower depth wins, and otherwise neither is reachable. This
+  applies to a `gcfg` tag that collides with a sibling field's name as well as
+  to embedding.
 
 For example, the following environment variables (and global prefix `APPNAME_`):
 
