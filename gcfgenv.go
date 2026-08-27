@@ -89,11 +89,8 @@ func readWithMapInto(r io.Reader, env map[string]string, prefix string, config i
 
 func fieldToEnvVar(field reflect.StructField) string {
 	// Everything after the first comma is an option such as `int=dho`, not
-	// part of the name. Including it produced a name no environment variable
-	// can have, so a field with an option was unreachable while gcfg read it
-	// from a file quite happily.
-	// strings.Cut would read better, but this module supports Go 1.17.
-	name := strings.SplitN(field.Tag.Get("gcfg"), ",", 2)[0]
+	// part of the name.
+	name, _, _ := strings.Cut(field.Tag.Get("gcfg"), ",")
 	if name != "" {
 		// we need to replace dashes with underscores for consistency
 		// with field.Name, which uses this convention automatically
@@ -242,10 +239,10 @@ func intModeFromTag(field reflect.StructField) types.IntMode {
 	var m types.IntMode
 	parts := strings.Split(field.Tag.Get("gcfg"), ",")
 	for _, part := range parts[1:] {
-		if !strings.HasPrefix(part, "int=") {
+		mode, ok := strings.CutPrefix(part, "int=")
+		if !ok {
 			continue
 		}
-		mode := strings.TrimPrefix(part, "int=")
 		if strings.ContainsAny(mode, "dD") {
 			m |= types.Dec
 		}

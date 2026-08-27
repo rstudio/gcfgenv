@@ -9,11 +9,11 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # "1.17" is the version go.mod declares. Without it the matrix never
+        # "1.25" is the version go.mod declares. Without it the matrix never
         # builds the oldest version this module claims to support, and a use of
         # a newer standard library function passes CI while breaking anyone on
         # that version.
-        go: ["1.17", oldstable, stable]
+        go: ["1.25", oldstable, stable]
 
     runs-on: ${{ matrix.os }}
 
