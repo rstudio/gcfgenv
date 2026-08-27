@@ -852,6 +852,93 @@ func (s *Suite) TestEmbeddedUnexportedTypeNotAddressableByName(c *check.C) {
 	c.Check(cfg, check.DeepEquals, config{})
 }
 
+func (s *Suite) TestUnexportedEmbeddedDoesNotCancelASibling(c *check.C) {
+	// An unexported embedded field cannot be set, so it must not occupy the
+	// name: a real field that shares it stays reachable. gcfg drops
+	// candidates it cannot set before it resolves a name, and so do we.
+	type sec struct {
+		base
+		Base string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, "[sec]\nbase = fromfile\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Base, check.Equals, "fromfile")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"SEC_BASE": "set"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Base, check.Equals, "set")
+}
+
+func (s *Suite) TestUnexportedEmbeddedDoesNotShadowAPromotedField(c *check.C) {
+	type Inner struct {
+		Base string
+	}
+	type sec struct {
+		base
+		Inner
+	}
+	type config struct {
+		Sec sec
+	}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, "[sec]\nbase = fromfile\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Inner.Base, check.Equals, "fromfile")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"SEC_BASE": "set"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Inner.Base, check.Equals, "set")
+}
+
+func (s *Suite) TestUnexportedEmbeddedDoesNotCancelASection(c *check.C) {
+	// The same shape one level up, where it would take a whole section with
+	// it.
+	type commonSec struct {
+		Level string
+	}
+	type common struct {
+		Unused string
+	}
+	type config struct {
+		common
+		Common commonSec
+	}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, "[common]\nlevel = fromfile\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Common.Level, check.Equals, "fromfile")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"COMMON_LEVEL": "set"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Common.Level, check.Equals, "set")
+}
+
+func (s *Suite) TestUnexportedEmbeddedDoesNotCancelASubsectionField(c *check.C) {
+	type subsec struct {
+		base
+		Base string
+	}
+	type config struct {
+		Sec map[string]*subsec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), map[string]string{"SEC_k_BASE": "set"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Assert(cfg.Sec, check.HasLen, 1)
+	c.Check(cfg.Sec["k"].Base, check.Equals, "set")
+}
+
 func (s *Suite) TestEmbeddedSections(c *check.C) {
 	// A section declared on an embedded struct. gcfg resolves a section name
 	// by promotion, so it is readable from a file and has to be reachable

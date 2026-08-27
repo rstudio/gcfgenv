@@ -163,11 +163,15 @@ func flatFields(t reflect.Type) []flatField {
 			sf := st.Field(i)
 			index := append(append(make([]int, 0, len(prefix)+1), prefix...), i)
 			if sf.Anonymous && sf.Type.Kind() == reflect.Struct {
-				// The embedded struct itself, for a type that can
-				// be parsed from text. An unexported embedded
-				// field is not settable, so this is skipped later
-				// by CanSet rather than here.
-				add(sf, index, depth)
+				// The embedded struct itself, but only when it is
+				// exported: reflect will not set an unexported
+				// embedded field, and gcfg drops candidates it
+				// cannot set before it resolves a name, so
+				// registering one here would let it cancel a real
+				// field that shares its name.
+				if sf.IsExported() {
+					add(sf, index, depth)
+				}
 				// Then its own fields, one level deeper, so that
 				// the outer struct's fields shadow them.
 				walk(sf.Type, index, depth+1)
@@ -194,6 +198,10 @@ func flatFields(t reflect.Type) []flatField {
 // default: the builtin integer types take decimal and hexadecimal, and a defined
 // type such as `type Mode int` also takes octal. Without this a leading zero
 // means one thing in a file and another in an environment variable.
+// gcfg makes one further distinction that does not arise here: it leaves
+// uintptr out of its table, so uintptr takes octal too. valFromEnvVar has no
+// uintptr case at all, so such a field already fails as an unsupported type.
+// Anyone adding one should give it octal here as well.
 func intMode(t reflect.Type) types.IntMode {
 	// A builtin type has no package to be defined in.
 	if t.PkgPath() == "" {
