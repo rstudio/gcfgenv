@@ -80,6 +80,15 @@ type parityTagOptionsSub struct {
 	Numbered int `gcfg:"the-number,int=dho"`
 }
 
+// parityTagOptionsIndirect keeps the option on a field whose value is reached
+// through another type, where the container's own default would otherwise win.
+type parityTagOptionsIndirect struct {
+	Ptr   *int   `gcfg:"ptr,int=dho"`
+	Slice []int  `gcfg:"slice,int=dho"`
+	Plain []int  `gcfg:"plain"`
+	Text  string `gcfg:"text,int=dho"`
+}
+
 // parityShapes are whole configuration structs, each exercising one shape.
 var parityShapes = []interface{}{
 	// A plain section with an exported embedded struct.
@@ -131,11 +140,13 @@ var parityShapes = []interface{}{
 		parityEmbeddedSections
 		ParityEmbeddedSections paritySection
 	}{},
-	// gcfg tags carrying options, in a section and in a subsection.
+	// gcfg tags carrying options, in a section and in a subsection, and on
+	// values reached through a pointer or a slice.
 	&struct{ Sec parityTagOptions }{},
 	&struct {
 		Sec map[string]*parityTagOptionsSub
 	}{},
+	&struct{ Sec parityTagOptionsIndirect }{},
 }
 
 // parityValues are tried in order; the first one gcfg accepts is the one
@@ -245,7 +256,7 @@ func parityNames(t reflect.Type) []string {
 			sf := st.Field(i)
 			// Only the part before the first comma names the field;
 			// the rest are options such as `int=dho`.
-			if tag, _, _ := strings.Cut(sf.Tag.Get("gcfg"), ","); tag != "" {
+			if tag := strings.SplitN(sf.Tag.Get("gcfg"), ",", 2)[0]; tag != "" {
 				add(tag)
 			}
 			add(sf.Name)

@@ -92,7 +92,8 @@ func fieldToEnvVar(field reflect.StructField) string {
 	// part of the name. Including it produced a name no environment variable
 	// can have, so a field with an option was unreachable while gcfg read it
 	// from a file quite happily.
-	name, _, _ := strings.Cut(field.Tag.Get("gcfg"), ",")
+	// strings.Cut would read better, but this module supports Go 1.17.
+	name := strings.SplitN(field.Tag.Get("gcfg"), ",", 2)[0]
 	if name != "" {
 		// we need to replace dashes with underscores for consistency
 		// with field.Name, which uses this convention automatically
@@ -203,12 +204,14 @@ func flatFields(t reflect.Type) []flatField {
 	return out
 }
 
-// intMode reports the integer bases to accept for t, mirroring gcfg's own
-// default: the builtin integer types take decimal and hexadecimal, and a defined
-// type such as `type Mode int` also takes octal. Without this a leading zero
+// intModesByType mirrors gcfg's own table: these types take decimal and
+// hexadecimal, and anything absent from it, including uintptr and any defined
+// type such as `type Mode int`, also accepts octal. Without this a leading zero
 // means one thing in a file and another in an environment variable.
-// intModesByType mirrors gcfg's own table. Anything absent from it, including
-// uintptr and any defined type, also accepts octal.
+//
+// big.Int is listed for fidelity, but does not reach here today: it is parsed by
+// the encoding.TextUnmarshaler branch, which infers the base itself. See the
+// README's list of remaining divergences.
 var intModesByType = map[reflect.Type]types.IntMode{
 	reflect.TypeOf(int(0)):    types.Dec | types.Hex,
 	reflect.TypeOf(int8(0)):   types.Dec | types.Hex,
@@ -239,10 +242,10 @@ func intModeFromTag(field reflect.StructField) types.IntMode {
 	var m types.IntMode
 	parts := strings.Split(field.Tag.Get("gcfg"), ",")
 	for _, part := range parts[1:] {
-		mode, ok := strings.CutPrefix(part, "int=")
-		if !ok {
+		if !strings.HasPrefix(part, "int=") {
 			continue
 		}
+		mode := strings.TrimPrefix(part, "int=")
 		if strings.ContainsAny(mode, "dD") {
 			m |= types.Dec
 		}
@@ -468,7 +471,7 @@ func valFromEnvVarWithMode(t reflect.Type, env string, tagMode types.IntMode) (r
 	// result below is converted to t before it is returned.
 	switch t.Kind() {
 	case reflect.Ptr:
-		ref, err := valFromEnvVar(t.Elem(), env)
+		ref, err := valFromEnvVarWithMode(t.Elem(), env, tagMode)
 		ptr := reflect.New(t.Elem())
 		ptr.Elem().Set(ref)
 		return ptr, err
@@ -531,7 +534,7 @@ func valFromEnvVarWithMode(t reflect.Type, env string, tagMode types.IntMode) (r
 		parts := strings.Split(env, ",")
 		out := reflect.MakeSlice(t, len(parts), len(parts))
 		for i := range parts {
-			elt, err := valFromEnvVar(t.Elem(), parts[i])
+			elt, err := valFromEnvVarWithMode(t.Elem(), parts[i], tagMode)
 			if err != nil {
 				return reflect.Zero(t), err
 			}

@@ -969,6 +969,40 @@ func (s *Suite) TestGcfgTagOptions(c *check.C) {
 	c.Check(byEnv.Sec, check.DeepEquals, byFile.Sec)
 }
 
+func (s *Suite) TestGcfgTagOptionsThroughPointersAndSlices(c *check.C) {
+	// The field's own int= override has to survive the walk into a pointer's
+	// or a slice element's type, where the default for the container type
+	// would otherwise take over.
+	type sec struct {
+		Ptr   *int  `gcfg:"ptr,int=dho"`
+		Slice []int `gcfg:"slice,int=dho"`
+		Plain []int `gcfg:"plain"`
+	}
+	type config struct {
+		Sec sec
+	}
+
+	byFile := config{}
+	err := gcfg.ReadStringInto(&byFile, "[sec]\nptr = 0777\nslice = 0777\nplain = 0777\n")
+	c.Check(err, check.IsNil)
+	c.Assert(byFile.Sec.Ptr, check.NotNil)
+	c.Check(*byFile.Sec.Ptr, check.Equals, 0777)
+	c.Check(byFile.Sec.Slice, check.DeepEquals, []int{0777})
+	c.Check(byFile.Sec.Plain, check.DeepEquals, []int{777})
+
+	byEnv := config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_PTR":   "0777",
+		"SEC_SLICE": "0777",
+		"SEC_PLAIN": "0777",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Assert(byEnv.Sec.Ptr, check.NotNil)
+	c.Check(*byEnv.Sec.Ptr, check.Equals, *byFile.Sec.Ptr)
+	c.Check(byEnv.Sec.Slice, check.DeepEquals, byFile.Sec.Slice)
+	c.Check(byEnv.Sec.Plain, check.DeepEquals, byFile.Sec.Plain)
+}
+
 func (s *Suite) TestSubsectionKeyEndingInAPropertyName(c *check.C) {
 	// The key is the variable with the property's name trimmed off the end.
 	// Replacing the first match instead would take a bite out of the key.
