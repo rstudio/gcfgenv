@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/check.v1"
 	"gopkg.in/gcfg.v1"
@@ -567,6 +568,836 @@ func (s *Suite) TestSlicePointerEnvVars(c *check.C) {
 	c.Check(*cfg.Sec.Custom, check.HasLen, 3)
 	c.Check(cfg.Sec.Custom.String(), check.Equals, "x|y|z")
 	c.Check(*cfg.Sec.Custom, check.DeepEquals, StringSliceType{"x", "y", "z"})
+}
+
+// base is embedded to check that the fields of an embedded struct are
+// addressable by environment variable, as they are in a configuration file.
+type base struct {
+	Issuer string
+	Scope  []string
+	Nested int
+}
+
+type outerBase struct {
+	base
+	Audience string
+}
+
+// definedString and friends exercise defined types whose underlying type is a
+// basic kind. A value of the underlying type is not assignable to them.
+type definedString string
+
+type definedInt int
+
+type definedBool bool
+
+func (s *Suite) TestEmbeddedStructs(c *check.C) {
+	type sec struct {
+		base
+		Audience string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	configString := `[sec]
+issuer = fromfile
+audience = fromfile
+`
+	// gcfg addresses an embedded struct's fields as though they were
+	// declared on the outer struct, so environment variables must too.
+	configEnvVars := map[string]string{
+		"SEC_ISSUER":   "set",
+		"SEC_NESTED":   "7",
+		"SEC_SCOPE":    "a,b",
+		"SEC_AUDIENCE": "set",
+		// The embedded struct is not addressable by its type name,
+		// matching gcfg, which reports that it cannot store data there.
+		"SEC_BASE": "notset",
+	}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, configString)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{
+		base:     base{Issuer: "fromfile"},
+		Audience: "fromfile",
+	}})
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(configString), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{
+		base:     base{Issuer: "set", Scope: []string{"a", "b"}, Nested: 7},
+		Audience: "set",
+	}})
+}
+
+func (s *Suite) TestEmbeddedStructsNested(c *check.C) {
+	// An embedded struct within an embedded struct is flattened all the way
+	// up.
+	type sec struct {
+		outerBase
+		Extra string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	configEnvVars := map[string]string{
+		"SEC_ISSUER":   "set",
+		"SEC_AUDIENCE": "set",
+		"SEC_EXTRA":    "set",
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{
+		outerBase: outerBase{base: base{Issuer: "set"}, Audience: "set"},
+		Extra:     "set",
+	}})
+}
+
+func (s *Suite) TestEmbeddedStructsShadowed(c *check.C) {
+	// A field declared on the outer struct hides the embedded one, as in Go
+	// and as in gcfg.
+	type sec struct {
+		base
+		Issuer string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	configEnvVars := map[string]string{"SEC_ISSUER": "set"}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, "[sec]\nissuer = fromfile\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Issuer, check.Equals, "fromfile")
+	c.Check(cfg.Sec.base.Issuer, check.Equals, "")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Issuer, check.Equals, "set")
+	c.Check(cfg.Sec.base.Issuer, check.Equals, "")
+}
+
+func (s *Suite) TestEmbeddedStructsAmbiguous(c *check.C) {
+	type otherBase struct {
+		Issuer string
+	}
+	// Two embedded structs at the same depth both declaring Issuer: the name
+	// is unreachable, as it is in Go.
+	type sec struct {
+		base
+		otherBase
+	}
+	type config struct {
+		Sec sec
+	}
+
+	configEnvVars := map[string]string{"SEC_ISSUER": "notset"}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.base.Issuer, check.Equals, "")
+	c.Check(cfg.Sec.otherBase.Issuer, check.Equals, "")
+}
+
+func (s *Suite) TestEmbeddedSubsections(c *check.C) {
+	type sec struct {
+		base
+		Audience string
+	}
+	type config struct {
+		Sec map[string]*sec
+	}
+
+	// k1 already exists in the file; k2 is created from the environment
+	// alone. Both branches have to flatten the embedded struct.
+	configString := `[sec "k1"]
+audience = fromfile
+`
+	configEnvVars := map[string]string{
+		"SEC_k1_ISSUER": "set",
+		"SEC_k1_SCOPE":  "a,b",
+		"SEC_k2_ISSUER": "set",
+		"SEC_k2_SCOPE":  "c",
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(configString), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: map[string]*sec{
+		"k1": {
+			base:     base{Issuer: "set", Scope: []string{"a", "b"}},
+			Audience: "fromfile",
+		},
+		"k2": {base: base{Issuer: "set", Scope: []string{"c"}}},
+	}})
+}
+
+func (s *Suite) TestSubsectionSlices(c *check.C) {
+	// A slice property of a subsection, in both map branches. Setting one
+	// used to panic in reflect.
+	type sec struct {
+		Field []string
+	}
+	type config struct {
+		Sec map[string]*sec
+	}
+
+	configString := `[sec "k1"]
+field = fromfile
+`
+	configEnvVars := map[string]string{
+		"SEC_k1_FIELD": "a,b",
+		"SEC_k2_FIELD": "c,d",
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(configString), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Sec: map[string]*sec{
+		// As elsewhere, environment values append to the file's.
+		"k1": {Field: []string{"fromfile", "a", "b"}},
+		"k2": {Field: []string{"c", "d"}},
+	}})
+}
+
+func (s *Suite) TestDefinedTypes(c *check.C) {
+	// Defined types with a basic underlying kind used to panic in
+	// reflect.Set, because the parsed value had the underlying type.
+	type sec struct {
+		Str  definedString
+		Num  definedInt
+		Flag definedBool
+		List []definedString
+	}
+	type config struct {
+		Sec map[string]*sec
+		Alt sec
+	}
+
+	configEnvVars := map[string]string{
+		"ALT_STR":     "set",
+		"ALT_NUM":     "7",
+		"ALT_FLAG":    "true",
+		"ALT_LIST":    "a,b",
+		"SEC_k1_STR":  "set",
+		"SEC_k1_LIST": "c",
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), configEnvVars, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Alt, check.DeepEquals, sec{
+		Str:  "set",
+		Num:  7,
+		Flag: true,
+		List: []definedString{"a", "b"},
+	})
+	c.Check(cfg.Sec["k1"], check.DeepEquals, &sec{
+		Str:  "set",
+		List: []definedString{"c"},
+	})
+}
+
+func (s *Suite) TestEmbeddedStructByTypeName(c *check.C) {
+	// An exported embedded struct is addressable by its type name as well as
+	// through its promoted fields, which is what makes an embedded time.Time
+	// usable. gcfg accepts both, so we do too.
+	type sec struct {
+		time.Time
+		Other string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	stamp := "2020-01-02T03:04:05Z"
+	want, err := time.Parse(time.RFC3339, stamp)
+	c.Assert(err, check.IsNil)
+
+	cfg := config{}
+	err = gcfg.ReadStringInto(&cfg, "[sec]\ntime = "+stamp+"\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Time.Equal(want), check.Equals, true)
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"SEC_TIME": stamp}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Time.Equal(want), check.Equals, true)
+}
+
+func (s *Suite) TestEmbeddedUnexportedTypeNotAddressableByName(c *check.C) {
+	// The exception: embedding an unexported type leaves the field itself
+	// unsettable, so only its promoted fields can be reached. gcfg agrees,
+	// because it requires the field to be settable.
+	type sec struct {
+		base
+		Audience string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), map[string]string{"SEC_BASE": "notset"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{})
+}
+
+func (s *Suite) TestUnexportedEmbeddedDoesNotCancelASibling(c *check.C) {
+	// An unexported embedded field cannot be set, so it must not occupy the
+	// name: a real field that shares it stays reachable. gcfg drops
+	// candidates it cannot set before it resolves a name, and so do we.
+	type sec struct {
+		base
+		Base string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, "[sec]\nbase = fromfile\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Base, check.Equals, "fromfile")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"SEC_BASE": "set"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Base, check.Equals, "set")
+}
+
+func (s *Suite) TestUnexportedEmbeddedDoesNotShadowAPromotedField(c *check.C) {
+	type Inner struct {
+		Base string
+	}
+	type sec struct {
+		base
+		Inner
+	}
+	type config struct {
+		Sec sec
+	}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, "[sec]\nbase = fromfile\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Inner.Base, check.Equals, "fromfile")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"SEC_BASE": "set"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Inner.Base, check.Equals, "set")
+}
+
+func (s *Suite) TestUnexportedEmbeddedDoesNotCancelASection(c *check.C) {
+	// The same shape one level up, where it would take a whole section with
+	// it.
+	type commonSec struct {
+		Level string
+	}
+	type common struct {
+		Unused string
+	}
+	type config struct {
+		common
+		Common commonSec
+	}
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, "[common]\nlevel = fromfile\n")
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Common.Level, check.Equals, "fromfile")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"COMMON_LEVEL": "set"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Common.Level, check.Equals, "set")
+}
+
+func (s *Suite) TestUnexportedEmbeddedDoesNotCancelASubsectionField(c *check.C) {
+	type subsec struct {
+		base
+		Base string
+	}
+	type config struct {
+		Sec map[string]*subsec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), map[string]string{"SEC_k_BASE": "set"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Assert(cfg.Sec, check.HasLen, 1)
+	c.Check(cfg.Sec["k"].Base, check.Equals, "set")
+}
+
+func (s *Suite) TestGcfgTagOptions(c *check.C) {
+	// A gcfg tag may carry options after the name, as in
+	// `gcfg:"the-name,int=dho"`. Only the part before the comma names the
+	// field: including the rest produced a name no environment variable can
+	// have, so the field could not be set at all. The option itself has to be
+	// honoured too, or the same field would read differently from a file.
+	type sec struct {
+		Numbered int `gcfg:"the-number,int=dho"`
+		Optioned int `gcfg:",int=dho"`
+		Plain    int
+	}
+	type config struct {
+		Sec sec
+	}
+
+	byFile := config{}
+	err := gcfg.ReadStringInto(&byFile, "[sec]\nthe-number = 0777\noptioned = 0777\nplain = 0777\n")
+	c.Check(err, check.IsNil)
+	c.Check(byFile.Sec, check.DeepEquals, sec{Numbered: 0777, Optioned: 0777, Plain: 777})
+
+	byEnv := config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_THE_NUMBER": "0777",
+		"SEC_OPTIONED":   "0777",
+		"SEC_PLAIN":      "0777",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Check(byEnv.Sec, check.DeepEquals, byFile.Sec)
+}
+
+func (s *Suite) TestGcfgTagOptionsThroughPointersAndSlices(c *check.C) {
+	// The field's own int= override has to survive the walk into a pointer's
+	// or a slice element's type, where the default for the container type
+	// would otherwise take over.
+	type sec struct {
+		Ptr   *int  `gcfg:"ptr,int=dho"`
+		Slice []int `gcfg:"slice,int=dho"`
+		Plain []int `gcfg:"plain"`
+	}
+	type config struct {
+		Sec sec
+	}
+
+	byFile := config{}
+	err := gcfg.ReadStringInto(&byFile, "[sec]\nptr = 0777\nslice = 0777\nplain = 0777\n")
+	c.Check(err, check.IsNil)
+	c.Assert(byFile.Sec.Ptr, check.NotNil)
+	c.Check(*byFile.Sec.Ptr, check.Equals, 0777)
+	c.Check(byFile.Sec.Slice, check.DeepEquals, []int{0777})
+	c.Check(byFile.Sec.Plain, check.DeepEquals, []int{777})
+
+	byEnv := config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_PTR":   "0777",
+		"SEC_SLICE": "0777",
+		"SEC_PLAIN": "0777",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Assert(byEnv.Sec.Ptr, check.NotNil)
+	c.Check(*byEnv.Sec.Ptr, check.Equals, *byFile.Sec.Ptr)
+	c.Check(byEnv.Sec.Slice, check.DeepEquals, byFile.Sec.Slice)
+	c.Check(byEnv.Sec.Plain, check.DeepEquals, byFile.Sec.Plain)
+}
+
+func (s *Suite) TestSubsectionKeyEndingInAPropertyName(c *check.C) {
+	// The key is the variable with the property's name trimmed off the end.
+	// Replacing the first match instead would take a bite out of the key.
+	type subsec struct {
+		URL string
+	}
+	type config struct {
+		Sec map[string]*subsec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""),
+		map[string]string{"SEC_PROD_URL_v2_URL": "https://example.com"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Assert(cfg.Sec, check.HasLen, 1)
+	c.Assert(cfg.Sec["PROD_URL_v2"], check.NotNil)
+	c.Check(cfg.Sec["PROD_URL_v2"].URL, check.Equals, "https://example.com")
+}
+
+func (s *Suite) TestEmbeddedSections(c *check.C) {
+	// A section declared on an embedded struct. gcfg resolves a section name
+	// by promotion, so it is readable from a file and has to be reachable
+	// from the environment as well.
+	type logging struct {
+		Level string
+	}
+	type Common struct {
+		Logging logging
+	}
+	type config struct {
+		Common
+		Server logging
+	}
+
+	configString := "[logging]\nlevel = fromfile\n"
+
+	cfg := config{}
+	err := gcfg.ReadStringInto(&cfg, configString)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Logging.Level, check.Equals, "fromfile")
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"LOGGING_LEVEL": "set",
+		"SERVER_LEVEL":  "set",
+	}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Logging.Level, check.Equals, "set")
+	c.Check(cfg.Server.Level, check.Equals, "set")
+}
+
+func (s *Suite) TestDefinedIntUsesTheSameBasesAsGcfg(c *check.C) {
+	// gcfg accepts octal for a defined integer type but not for a builtin
+	// one, so a leading zero has to mean the same thing in a file and in an
+	// environment variable.
+	type octInt int
+	type sec struct {
+		Defined octInt
+		Builtin int
+	}
+	type config struct {
+		Sec sec
+	}
+
+	byFile := config{}
+	err := gcfg.ReadStringInto(&byFile, "[sec]\ndefined = 0755\nbuiltin = 0755\n")
+	c.Check(err, check.IsNil)
+	c.Check(byFile.Sec.Defined, check.Equals, octInt(0755))
+	c.Check(byFile.Sec.Builtin, check.Equals, 755)
+
+	byEnv := config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_DEFINED": "0755",
+		"SEC_BUILTIN": "0755",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Check(byEnv.Sec, check.DeepEquals, byFile.Sec)
+}
+
+func (s *Suite) TestNameCollisionWithinOneStruct(c *check.C) {
+	// Two fields of one struct that map to the same name cancel each other,
+	// as they do in gcfg, which reports the name as unstorable rather than
+	// picking one.
+	type sec struct {
+		A string `gcfg:"x"`
+		X string
+	}
+	type config struct {
+		Sec sec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), map[string]string{"SEC_X": "notset"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{})
+}
+
+// Types used to build the shapes below. Exported and unexported variants matter:
+// reflect will not set an unexported embedded field, and gcfg skips what it
+// cannot set.
+type parityInner struct {
+	Alpha string
+	Beta  []string
+}
+
+type parityInnerUnexported struct {
+	Alpha string
+	Gamma string
+}
+
+type parityTagged struct {
+	Delta string `gcfg:"delta-name"`
+}
+
+type parityDeep struct {
+	parityInner
+	Epsilon string
+}
+
+type paritySub struct {
+	parityInner
+	Alpha string
+}
+
+type parityCollide struct {
+	parityInner
+	ParityInner string
+}
+
+type parityShadowed struct {
+	parityInner
+	Alpha string
+	Zeta  string
+}
+
+type paritySection struct {
+	Level string
+	Items []string
+}
+
+type parityEmbeddedSections struct {
+	Logging paritySection
+}
+
+// parityTagOptions exercises a gcfg tag carrying options, which both names the
+// field and changes how its value is parsed.
+type parityTagOptions struct {
+	Numbered int `gcfg:"the-number,int=dho"`
+	Optioned int `gcfg:",int=dho"`
+	Plain    int
+}
+
+type parityTagOptionsSub struct {
+	URL      string
+	Numbered int `gcfg:"the-number,int=dho"`
+}
+
+// parityTagOptionsIndirect keeps the option on a field whose value is reached
+// through another type, where the container's own default would otherwise win.
+type parityTagOptionsIndirect struct {
+	Ptr   *int   `gcfg:"ptr,int=dho"`
+	Slice []int  `gcfg:"slice,int=dho"`
+	Plain []int  `gcfg:"plain"`
+	Text  string `gcfg:"text,int=dho"`
+}
+
+// parityShapes are whole configuration structs, each exercising one shape.
+var parityShapes = []interface{}{
+	// A plain section with an exported embedded struct.
+	&struct {
+		Sec struct {
+			parityInner
+			Other string
+		}
+	}{},
+	// An unexported embedded struct, reachable only through its fields.
+	&struct {
+		Sec struct {
+			parityInnerUnexported
+			Other string
+		}
+	}{},
+	// An embedded field whose type name collides with a sibling field.
+	&struct{ Sec parityCollide }{},
+	// A sibling that shadows a promoted field.
+	&struct{ Sec parityShadowed }{},
+	// A gcfg tag on a promoted field.
+	&struct {
+		Sec struct {
+			parityTagged
+			Other string
+		}
+	}{},
+	// Two levels of embedding.
+	&struct {
+		Sec struct {
+			parityDeep
+			Other string
+		}
+	}{},
+	// Subsections, with and without embedding.
+	&struct {
+		Sec map[string]*paritySub
+	}{},
+	&struct {
+		Sec map[string]*paritySection
+	}{},
+	// Sections promoted from an embedded struct.
+	&struct {
+		parityEmbeddedSections
+		Server paritySection
+	}{},
+	// A section name colliding with an embedded struct's type name.
+	&struct {
+		parityEmbeddedSections
+		ParityEmbeddedSections paritySection
+	}{},
+	// gcfg tags carrying options, in a section and in a subsection, and on
+	// values reached through a pointer or a slice.
+	&struct{ Sec parityTagOptions }{},
+	&struct {
+		Sec map[string]*parityTagOptionsSub
+	}{},
+	&struct{ Sec parityTagOptionsIndirect }{},
+}
+
+// parityValues are tried in order; the first one gcfg accepts is the one
+// compared. Covering several kinds keeps a name from being judged unreachable
+// merely because the value did not suit its type.
+var parityValues = []string{"parityvalue", "7", "true"}
+
+// parityKeys are the subsection names to try for a map-valued section. One of
+// them ends in a property name, which is how a key gets mangled if the suffix is
+// trimmed carelessly.
+var parityKeys = []string{"k1", "PROD_URL_v2"}
+
+func (s *Suite) TestParityWithGcfgAcrossShapes(c *check.C) {
+	checked := 0
+	for _, shape := range parityShapes {
+		t := reflect.TypeOf(shape).Elem()
+		cands := parityCandidates(t)
+		// A guard on the guard: a shape that generates no names would
+		// pass vacuously.
+		c.Check(len(cands) > 0, check.Equals, true,
+			check.Commentf("%s generated no candidate names", t))
+		for _, cand := range cands {
+			checked++
+			parityCheckOne(c, shape, cand)
+		}
+	}
+	c.Check(checked > 30, check.Equals, true,
+		check.Commentf("only %d names generated; the candidate walk is broken", checked))
+	c.Logf("compared %d candidate names against gcfg", checked)
+}
+
+// candidate is one name to try, in both notations.
+type candidate struct {
+	section  string
+	subKey   string
+	property string
+}
+
+func (cand candidate) fileText(value string) string {
+	header := "[" + cand.section + "]"
+	if cand.subKey != "" {
+		header = "[" + cand.section + " \"" + cand.subKey + "\"]"
+	}
+	return header + "\n" + cand.property + " = " + value + "\n"
+}
+
+// envVar restates the documented naming rules independently of
+// fieldToEnvVar, which is part of what is under test: uppercase, and dashes
+// become underscores. Subsection names are left alone.
+func (cand candidate) envVar() string {
+	name := func(s string) string {
+		return strings.ToUpper(strings.ReplaceAll(s, "-", "_"))
+	}
+	parts := []string{name(cand.section)}
+	if cand.subKey != "" {
+		parts = append(parts, cand.subKey)
+	}
+	parts = append(parts, name(cand.property))
+	return strings.Join(parts, "_")
+}
+
+// parityCandidates lists every name that could plausibly address something in t:
+// every field name at every depth, plus every embedded type name, on both the
+// section and the property axis. Deliberately generated without consulting
+// flatFields.
+func parityCandidates(t reflect.Type) []candidate {
+	var out []candidate
+	for _, sec := range parityNames(t) {
+		sf, ok := parityFieldByName(t, sec)
+		if !ok {
+			continue
+		}
+		switch sf.Type.Kind() {
+		case reflect.Struct:
+			for _, prop := range parityNames(sf.Type) {
+				out = append(out, candidate{section: sec, property: prop})
+			}
+		case reflect.Map:
+			elem := sf.Type.Elem()
+			if elem.Kind() != reflect.Ptr || elem.Elem().Kind() != reflect.Struct {
+				continue
+			}
+			for _, prop := range parityNames(elem.Elem()) {
+				for _, key := range parityKeys {
+					out = append(out, candidate{section: sec, subKey: key, property: prop})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// parityNames returns the syntactic names of a struct: its own fields, the type
+// names of its embedded structs, and recursively the names those embed.
+func parityNames(t reflect.Type) []string {
+	var out []string
+	seen := make(map[string]bool)
+	add := func(n string) {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	var walk func(reflect.Type)
+	walk = func(st reflect.Type) {
+		for i := 0; i < st.NumField(); i++ {
+			sf := st.Field(i)
+			// Only the part before the first comma names the field;
+			// the rest are options such as `int=dho`.
+			if tag := strings.SplitN(sf.Tag.Get("gcfg"), ",", 2)[0]; tag != "" {
+				add(tag)
+			}
+			add(sf.Name)
+			if sf.Anonymous && sf.Type.Kind() == reflect.Struct {
+				walk(sf.Type)
+			}
+		}
+	}
+	walk(t)
+	return out
+}
+
+// parityFieldByName resolves a name to a field the way the candidate generator
+// needs it, tolerating unexported and embedded names.
+func parityFieldByName(t reflect.Type, name string) (reflect.StructField, bool) {
+	for i := 0; i < t.NumField(); i++ {
+		sf := t.Field(i)
+		if sf.Name == name || sf.Tag.Get("gcfg") == name {
+			return sf, true
+		}
+		if sf.Anonymous && sf.Type.Kind() == reflect.Struct {
+			if inner, ok := parityFieldByName(sf.Type, name); ok {
+				return inner, true
+			}
+		}
+	}
+	return reflect.StructField{}, false
+}
+
+func parityCheckOne(c *check.C, shape interface{}, cand candidate) {
+	shapeType := reflect.TypeOf(shape).Elem()
+
+	for _, value := range parityValues {
+		fromFile := reflect.New(shapeType)
+		fileErr := gcfg.ReadStringInto(fromFile.Interface(), cand.fileText(value))
+
+		fromEnv := reflect.New(shapeType)
+		envErr := readWithMapInto(strings.NewReader(""),
+			map[string]string{cand.envVar(): value}, "", fromEnv.Interface())
+
+		zero := reflect.New(shapeType)
+
+		if fileErr == nil {
+			// gcfg accepted this name, so the environment must reach
+			// the same field with the same result.
+			c.Check(envErr, check.IsNil, check.Commentf(
+				"%s: %s=%s errored but the file form did not", shapeType, cand.envVar(), value))
+			c.Check(fromEnv.Elem().Interface(), check.DeepEquals, fromFile.Elem().Interface(),
+				check.Commentf("%s: %s=%s did not match the file form %q",
+					shapeType, cand.envVar(), value, strings.TrimSpace(cand.fileText(value))))
+			return
+		}
+
+		// gcfg refused this name. The environment may refuse it too, but
+		// it must not silently set something.
+		if envErr == nil {
+			c.Check(fromEnv.Elem().Interface(), check.DeepEquals, zero.Elem().Interface(),
+				check.Commentf("%s: %s=%s set a field that the file form refuses (%v)",
+					shapeType, cand.envVar(), value, fileErr))
+		}
+	}
 }
 
 func Test(t *testing.T) {

@@ -31,6 +31,14 @@ rules:
   package).
 * Dashes are converted to underscores.
 * Subsection names are left as-is.
+* Anonymous embedded structs are flattened, as in `gcfg`. A section or field
+  declared on an embedded struct is named as though it were declared on the
+  outer struct. An exported embedded struct is also addressable by its type
+  name; an unexported one is reachable only through its fields.
+* Where two names compete, the shallower wins, and otherwise neither is
+  reachable, as in Go.
+* Only the part of a `gcfg` tag before the first comma names the field. Options
+  after it, such as `int=dho`, are honored.
 
 For example, the following environment variables (and global prefix `APPNAME_`):
 
@@ -68,6 +76,23 @@ other-field = elephants
   However, most shells and other tools do not handle whitespace in environment
   variables well, so we recommend using `snake_case` or `kebab-case` in
   subsection headings instead.
+
+Known cases where an environment variable and a file entry disagree:
+
+* A `big.Int` field infers its base, so `0777` is 511 from an environment
+  variable and 777 from a file.
+
+* A `uintptr` field cannot be set, and the attempt fails the read.
+
+* A property or section promoted through an embedded pointer is not reachable.
+
+* Competing names are resolved on the environment variable name rather than the
+  Go field name, so two fields whose Go names collide but whose tags do not are
+  settable here and refused by `gcfg`.
+
+* `Default_<Section>` is matched by Go field name, where `gcfg` folds
+  `default-<section name>`. A section renamed by a tag takes its defaults from
+  one and not the other.
 
 ## Versioning
 
