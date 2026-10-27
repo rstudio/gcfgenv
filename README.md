@@ -31,6 +31,10 @@ rules:
   package).
 * Dashes are converted to underscores.
 * Subsection names are left as-is.
+* Leaving the subsection name out sets the unnamed subsection, written as a
+  plain `[sec]` heading in a file. Where a name could be read either way, as
+  with properties named `A_B` and `B`, `SEC_A_B` is property `B` of
+  subsection `A`.
 * Anonymous embedded structs are flattened, as in `gcfg`. A section or field
   declared on an embedded struct is named as though it were declared on the
   outer struct. An exported embedded struct is also addressable by its type

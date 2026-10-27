@@ -474,6 +474,69 @@ func (s *Suite) TestErrorsNameTheVariable(c *check.C) {
 	}
 }
 
+func (s *Suite) TestUnnamedSubsection(c *check.C) {
+	// A variable with no subsection name sets the unnamed subsection, as a
+	// plain [sec] heading does in a file, taking the same defaults.
+	type sec struct {
+		Field string
+		Other string
+	}
+	type config struct {
+		Sec         map[string]*sec
+		Default_Sec sec
+	}
+
+	byFile := config{Default_Sec: sec{Other: "default"}}
+	err := gcfg.ReadStringInto(&byFile, "[sec]\nfield = x\n")
+	c.Check(err, check.IsNil)
+
+	byEnv := config{Default_Sec: sec{Other: "default"}}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_FIELD": "x",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Check(byEnv, check.DeepEquals, byFile)
+	c.Check(byEnv.Sec, check.DeepEquals, map[string]*sec{"": {Field: "x", Other: "default"}})
+
+	// Alongside a named subsection.
+	byEnv = config{Default_Sec: sec{Other: "default"}}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_FIELD":    "x",
+		"SEC_k1_FIELD": "y",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Check(byEnv.Sec, check.DeepEquals, map[string]*sec{
+		"":   {Field: "x", Other: "default"},
+		"k1": {Field: "y", Other: "default"},
+	})
+
+	// An unnamed subsection that already exists is filled in place.
+	byEnv = config{Sec: map[string]*sec{"": {Other: "seeded"}}}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{
+		"SEC_FIELD": "x",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Check(byEnv.Sec, check.DeepEquals, map[string]*sec{"": {Field: "x", Other: "seeded"}})
+}
+
+func (s *Suite) TestUnnamedSubsectionDoesNotOverrideAKey(c *check.C) {
+	// SEC_A_B could be property A_B of the unnamed subsection or property B
+	// of subsection A. The keyed reading is the one older versions applied,
+	// so it wins.
+	type sec struct {
+		A_B string
+		B   string
+	}
+	type config struct {
+		Sec map[string]*sec
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), map[string]string{"SEC_A_B": "x"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec, check.DeepEquals, map[string]*sec{"A": {B: "x"}})
+}
+
 func (s *Suite) TestGcfgTags(c *check.C) {
 	type sec1 struct {
 		F1 string `gcfg:"another-name"`
@@ -1333,8 +1396,9 @@ var parityValues = []string{"parityvalue", "7", "true"}
 
 // parityKeys are the subsection names to try for a map-valued section. One of
 // them ends in a property name, which is how a key gets mangled if the suffix is
-// trimmed carelessly.
-var parityKeys = []string{"k1", "PROD_URL_v2"}
+// trimmed carelessly. The empty key is the unnamed subsection, a plain [section]
+// heading in a file.
+var parityKeys = []string{"k1", "PROD_URL_v2", ""}
 
 func (s *Suite) TestParityWithGcfgAcrossShapes(c *check.C) {
 	checked := 0
