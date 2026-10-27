@@ -34,7 +34,9 @@ rules:
 * Anonymous embedded structs are flattened, as in `gcfg`. A section or field
   declared on an embedded struct is named as though it were declared on the
   outer struct. An exported embedded struct is also addressable by its type
-  name; an unexported one is reachable only through its fields.
+  name when its type implements `encoding.TextUnmarshaler`, as `time.Time`
+  does; otherwise the variable is ignored. An unexported one is reachable only
+  through its fields.
 * Where two names compete, the shallower wins, and otherwise neither is
   reachable, as in Go.
 * Only the part of a `gcfg` tag before the first comma names the field. Options
@@ -87,6 +89,10 @@ Known cases where an environment variable and a file entry disagree:
 * A `uintptr` field cannot be set, and the attempt fails the read.
 
 * A property or section promoted through an embedded pointer is not reachable.
+
+* An exported embedded struct whose type does not implement
+  `encoding.TextUnmarshaler` is ignored when named by its type name. `gcfg`
+  accepts the name in a file and then fails to parse the value.
 
 * Competing names are resolved on the environment variable name rather than the
   Go field name, so two fields whose Go names collide but whose tags do not are

@@ -110,7 +110,14 @@ type flatField struct {
 	index []int
 	// intMode is the field's own `int=` override, or zero for none.
 	intMode types.IntMode
+	// settable is false for an exported embedded struct whose type cannot
+	// be parsed from text. Such a field still takes part in name
+	// resolution, and can still be a section, but a property of that name
+	// is never set.
+	settable bool
 }
+
+var textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
 
 // flatFields returns the fields of a struct that an environment variable can
 // name, flattening anonymous embedded structs.
@@ -120,11 +127,13 @@ type flatField struct {
 //   - Its fields are addressable as though they had been declared on the outer
 //     struct. Without this, a property the configuration file exposes normally
 //     is silently unreachable.
-//   - The embedded struct itself is addressable by its type name, which is
-//     useful when its type can be parsed from text, as with an embedded
-//     time.Time. Embedding an unexported type is the exception: gcfg requires
-//     the field to be settable, and reflect refuses for an unexported embedded
-//     field, so only its promoted fields can be reached.
+//   - The embedded struct itself is addressable by its type name. As a
+//     property, that is only useful when its type can be parsed from text, as
+//     with an embedded time.Time, so any other type is marked as not settable.
+//     gcfg accepts such a name and then fails to parse it; we leave the
+//     variable unused instead. Embedding an unexported type is the exception:
+//     gcfg requires the field to be settable, and reflect refuses for an
+//     unexported embedded field, so only its promoted fields can be reached.
 //
 // Shadowing follows Go's promotion rules: a field at a shallower depth hides a
 // same-named field at a deeper one, and two same-named fields at the same depth
@@ -142,12 +151,13 @@ func flatFields(t reflect.Type) []flatField {
 	byName := make(map[string]*candidate)
 	var order []string
 
-	add := func(sf reflect.StructField, index []int, depth int) {
+	add := func(sf reflect.StructField, index []int, depth int, settable bool) {
 		name := fieldToEnvVar(sf)
+		field := flatField{name: name, index: index, intMode: intModeFromTag(sf), settable: settable}
 		found, ok := byName[name]
 		if !ok {
 			byName[name] = &candidate{
-				field: flatField{name: name, index: index, intMode: intModeFromTag(sf)},
+				field: field,
 				depth: depth,
 				count: 1,
 			}
@@ -156,7 +166,7 @@ func flatFields(t reflect.Type) []flatField {
 		}
 		switch {
 		case depth < found.depth:
-			found.field = flatField{name: name, index: index, intMode: intModeFromTag(sf)}
+			found.field = field
 			found.depth = depth
 			found.count = 1
 		case depth == found.depth:
@@ -177,7 +187,7 @@ func flatFields(t reflect.Type) []flatField {
 				// registering one here would let it cancel a real
 				// field that shares its name.
 				if sf.IsExported() {
-					add(sf, index, depth)
+					add(sf, index, depth, reflect.PointerTo(sf.Type).Implements(textUnmarshalerType))
 				}
 				// Then its own fields, one level deeper, so that
 				// the outer struct's fields shadow them.
@@ -187,7 +197,7 @@ func flatFields(t reflect.Type) []flatField {
 			if !sf.IsExported() {
 				continue
 			}
-			add(sf, index, depth)
+			add(sf, index, depth, true)
 		}
 	}
 	walk(t, nil, 0)
@@ -293,7 +303,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 		if sec.Kind() == reflect.Struct {
 			for _, ff := range flatFields(secType) {
 				f := sec.FieldByIndex(ff.index)
-				if !f.CanSet() {
+				if !ff.settable || !f.CanSet() {
 					continue
 				}
 				name := secPrefix + "_" + ff.name
@@ -338,7 +348,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				for _, ff := range subsecFields {
 					f := subsec.FieldByIndex(ff.index)
 					envVar := key + ff.name
-					if !f.CanSet() {
+					if !ff.settable || !f.CanSet() {
 						continue
 					}
 					val, found := matchingEnv[envVar]
@@ -365,6 +375,9 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				defaults = reflect.Zero(subsecType)
 			}
 			for _, ff := range subsecFields {
+				if !ff.settable {
+					continue
+				}
 				suf := "_" + ff.name
 				for e, v := range matchingEnv {
 					if !strings.HasSuffix(e, suf) {

@@ -860,6 +860,77 @@ func (s *Suite) TestEmbeddedStructByTypeName(c *check.C) {
 	c.Check(cfg.Sec.Time.Equal(want), check.Equals, true)
 }
 
+func (s *Suite) TestEmbeddedStructByTypeNameNeedsAParseableType(c *check.C) {
+	// An embedded struct whose type cannot be parsed from text is not
+	// settable by its type name. gcfg accepts the name in a file and then
+	// fails to parse the value; the environment variable is left unused
+	// instead. Its promoted fields are still reachable.
+	type Common struct {
+		Flag bool
+	}
+	type sec struct {
+		Common
+		Other string
+	}
+	type config struct {
+		Plain sec
+		Keyed map[string]*sec
+	}
+
+	err := gcfg.ReadStringInto(&config{}, "[plain]\ncommon = x\n")
+	c.Check(err, check.NotNil)
+
+	cfg := config{}
+	err = readWithMapInto(strings.NewReader("[keyed \"k1\"]\n"), map[string]string{
+		"PLAIN_COMMON":    "x",
+		"KEYED_k1_COMMON": "x",
+		"KEYED_k2_COMMON": "x",
+	}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{Keyed: map[string]*sec{"k1": {}}})
+
+	cfg = config{}
+	err = readWithMapInto(strings.NewReader("[keyed \"k1\"]\n"), map[string]string{
+		"PLAIN_FLAG":    "true",
+		"KEYED_k1_FLAG": "true",
+		"KEYED_k2_FLAG": "true",
+	}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg, check.DeepEquals, config{
+		Plain: sec{Common: Common{Flag: true}},
+		Keyed: map[string]*sec{
+			"k1": {Common: Common{Flag: true}},
+			"k2": {Common: Common{Flag: true}},
+		},
+	})
+}
+
+func (s *Suite) TestUnparseableEmbeddedTypeNameStillShadows(c *check.C) {
+	// An embedded struct that cannot be set by its type name still takes
+	// part in name resolution, so a deeper field of the same name stays
+	// hidden, as it is in gcfg, which resolves the name to the embedded
+	// struct and then fails to parse it.
+	type Deep struct {
+		Common string
+	}
+	type Common struct {
+		Deep
+	}
+	type config struct {
+		Sec struct {
+			Common
+		}
+	}
+
+	err := gcfg.ReadStringInto(&config{}, "[sec]\ncommon = x\n")
+	c.Check(err, check.NotNil)
+
+	cfg := config{}
+	err = readWithMapInto(strings.NewReader(""), map[string]string{"SEC_COMMON": "x"}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.Sec.Common.Deep.Common, check.Equals, "")
+}
+
 func (s *Suite) TestEmbeddedUnexportedTypeNotAddressableByName(c *check.C) {
 	// The exception: embedding an unexported type leaves the field itself
 	// unsettable, so only its promoted fields can be reached. gcfg agrees,
