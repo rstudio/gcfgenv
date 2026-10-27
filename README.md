@@ -15,10 +15,22 @@ struct -- the package only supports to structures and conventions permitted by
 
 ## Usage
 
-There are only two exported functions:
+There are two exported functions:
 
 * `ReadWithEnvInto()`, which wraps `gcfg.ReadInto()`; and
 * `ReadFileWithEnvInto()`, which wraps `gcfg.ReadFileInto()`
+
+Each has a `...Report()` variant, `ReadWithEnvIntoReport()` and
+`ReadFileWithEnvIntoReport()`, that also returns a `Report` naming the
+environment variables it applied and the ones it did not:
+
+* `Applied` lists every variable that set a field.
+* `Unused` lists every variable that carries the prefix followed by a section's
+  name and an underscore, such as `APPNAME_SEC_TYPO`, but set nothing. Other
+  variables carrying the prefix may belong to something else, so they are left
+  out. `Unused` is empty when there is no prefix.
+
+A `Report` holds names only, never values, so it is safe to log.
 
 Configuration fields are converted to environment variables using the follow
 rules:

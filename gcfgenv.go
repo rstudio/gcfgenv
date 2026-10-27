@@ -14,31 +14,62 @@ import (
 	"math/big"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 
 	"gopkg.in/gcfg.v1"
 	"gopkg.in/gcfg.v1/types"
 )
 
+// Report names the environment variables a read looked at, by what happened to
+// them. It never holds values, which may be secrets.
+type Report struct {
+	// Applied lists the variables that set a field, sorted.
+	Applied []string
+	// Unused lists the variables that carry the prefix followed by a
+	// section's name and an underscore, but set nothing, sorted. A
+	// variable that carries the prefix but names no section is left out,
+	// since it may belong to something else. Unused is nil when the
+	// prefix is empty, because then every variable would qualify.
+	Unused []string
+}
+
 // ReadFileWithEnvInto reads the gcfg-formatted file at filename, injects any
 // overrides from the process's environment variables (prefixed with envPrefix),
 // and sets these values in the corresponding fields of config.
 func ReadFileWithEnvInto(filename string, envPrefix string, config interface{}) error {
-	f, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	maybeSkipBOM(f)
-	return ReadWithEnvInto(f, envPrefix, config)
+	_, err := ReadFileWithEnvIntoReport(filename, envPrefix, config)
+	return err
 }
 
 // ReadWithEnvInto reads gcfg-formatted data from r, injects any overrides from
 // the process's environment variables (prefixed with envPrefix), and sets these
 // values in the corresponding fields of config.
 func ReadWithEnvInto(r io.Reader, envPrefix string, config interface{}) error {
+	_, err := ReadWithEnvIntoReport(r, envPrefix, config)
+	return err
+}
+
+// ReadFileWithEnvIntoReport is ReadFileWithEnvInto, and also reports which
+// environment variables were applied and which were not. See
+// ReadWithEnvIntoReport.
+func ReadFileWithEnvIntoReport(filename string, envPrefix string, config interface{}) (Report, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return Report{}, err
+	}
+	defer f.Close()
+	maybeSkipBOM(f)
+	return ReadWithEnvIntoReport(f, envPrefix, config)
+}
+
+// ReadWithEnvIntoReport is ReadWithEnvInto, and also reports which environment
+// variables were applied and which were not. The report is complete when the
+// error is nil or only carries gcfg's non-fatal warnings (see gcfg.FatalOnly),
+// and is empty otherwise.
+func ReadWithEnvIntoReport(r io.Reader, envPrefix string, config interface{}) (Report, error) {
 	env := mapFromEnviron(os.Environ())
-	return readWithMapInto(r, env, envPrefix, config)
+	return readWithMapIntoReport(r, env, envPrefix, config)
 }
 
 var utf8BOM = []byte("\ufeff")
@@ -70,21 +101,26 @@ func mapFromEnviron(environ []string) map[string]string {
 }
 
 func readWithMapInto(r io.Reader, env map[string]string, prefix string, config interface{}) error {
+	_, err := readWithMapIntoReport(r, env, prefix, config)
+	return err
+}
+
+func readWithMapIntoReport(r io.Reader, env map[string]string, prefix string, config interface{}) (Report, error) {
 	var upstreamErr error
 	upstreamErr = gcfg.ReadInto(config, r)
 	if gcfg.FatalOnly(upstreamErr) != nil {
-		return upstreamErr
+		return Report{}, upstreamErr
 	}
 	if prefix != "" && !strings.HasSuffix(prefix, "_") {
 		prefix = prefix + "_"
 	}
 	// We can assert that config is a pointer to a struct at this point.
 	ref := reflect.ValueOf(config).Elem()
-	err := setGcfgWithEnvMap(ref, prefix, env)
-	if err == nil {
-		return upstreamErr
+	report, err := setGcfgWithEnvMap(ref, prefix, env)
+	if err != nil {
+		return Report{}, err
 	}
-	return err
+	return report, upstreamErr
 }
 
 func fieldToEnvVar(field reflect.StructField) string {
@@ -283,8 +319,20 @@ func setField(f reflect.Value, name, val string, mode types.IntMode) error {
 	return nil
 }
 
-func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) error {
+func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) (Report, error) {
 	refType := ref.Type()
+	applied := make(map[string]bool)
+	// sectionPrefixes holds, for each section, the prefix that a variable
+	// naming it starts with.
+	var sectionPrefixes []string
+	// set is setField, and records the variable as applied.
+	set := func(f reflect.Value, name, val string, mode types.IntMode) error {
+		if err := setField(f, name, val, mode); err != nil {
+			return err
+		}
+		applied[name] = true
+		return nil
+	}
 	// Sections are flattened out of embedded structs for the same reason
 	// their properties are: gcfg resolves a section name by promotion, so a
 	// section declared on an embedded struct is readable from a file and
@@ -300,6 +348,9 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 		}
 
 		// Sections can be either structs or map[string]*struct.
+		if k := sec.Kind(); k == reflect.Struct || k == reflect.Map {
+			sectionPrefixes = append(sectionPrefixes, secPrefix+"_")
+		}
 		if sec.Kind() == reflect.Struct {
 			for _, ff := range flatFields(secType) {
 				f := sec.FieldByIndex(ff.index)
@@ -311,8 +362,8 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				if !found {
 					continue
 				}
-				if err := setField(f, name, val, ff.intMode); err != nil {
-					return err
+				if err := set(f, name, val, ff.intMode); err != nil {
+					return Report{}, err
 				}
 			}
 			continue
@@ -356,8 +407,8 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 						continue
 					}
 					delete(matchingEnv, envVar)
-					if err := setField(f, secPrefix+"_"+envVar, val, ff.intMode); err != nil {
-						return err
+					if err := set(f, secPrefix+"_"+envVar, val, ff.intMode); err != nil {
+						return Report{}, err
 					}
 				}
 			}
@@ -404,8 +455,8 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 					// name would otherwise lose the wrong part
 					// of itself.
 					k := strings.TrimSuffix(e, suf)
-					if err := setField(subsection(k).FieldByIndex(ff.index), secPrefix+"_"+e, v, ff.intMode); err != nil {
-						return err
+					if err := set(subsection(k).FieldByIndex(ff.index), secPrefix+"_"+e, v, ff.intMode); err != nil {
+						return Report{}, err
 					}
 					// TODO: Does this have any unfortunate
 					// side-effects?
@@ -425,8 +476,8 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				if !found {
 					continue
 				}
-				if err := setField(subsection("").FieldByIndex(ff.index), secPrefix+"_"+ff.name, v, ff.intMode); err != nil {
-					return err
+				if err := set(subsection("").FieldByIndex(ff.index), secPrefix+"_"+ff.name, v, ff.intMode); err != nil {
+					return Report{}, err
 				}
 				delete(matchingEnv, ff.name)
 			}
@@ -437,7 +488,28 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 		// Non-section fields do not cause gcfg to error, so we can
 		// ignore them here as well.
 	}
-	return nil
+
+	var report Report
+	for name := range applied {
+		report.Applied = append(report.Applied, name)
+	}
+	slices.Sort(report.Applied)
+	if prefix == "" {
+		return report, nil
+	}
+	for name := range env {
+		if applied[name] {
+			continue
+		}
+		for _, p := range sectionPrefixes {
+			if strings.HasPrefix(name, p) {
+				report.Unused = append(report.Unused, name)
+				break
+			}
+		}
+	}
+	slices.Sort(report.Unused)
+	return report, nil
 }
 
 func valFromEnvVar(t reflect.Type, env string) (reflect.Value, error) {
