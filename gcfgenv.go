@@ -110,8 +110,8 @@ type flatField struct {
 	index []int
 	// intMode is the field's own `int=` override, or zero for none.
 	intMode types.IntMode
-	// settable is false for an exported embedded struct whose type cannot
-	// be parsed from text. Such a field still takes part in name
+	// settable is false for an exported embedded struct, or pointer to
+	// one, whose type cannot be parsed from text. Such a field still takes part in name
 	// resolution, and can still be a section, but a property of that name
 	// is never set.
 	settable bool
@@ -134,6 +134,9 @@ var textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem(
 //     variable unused instead. Embedding an unexported type is the exception:
 //     gcfg requires the field to be settable, and reflect refuses for an
 //     unexported embedded field, so only its promoted fields can be reached.
+//
+// An embedded pointer to a struct is addressable by its type name on the same
+// terms, but its own fields are not reached.
 //
 // Shadowing follows Go's promotion rules: a field at a shallower depth hides a
 // same-named field at a deeper one, and two same-named fields at the same depth
@@ -197,7 +200,14 @@ func flatFields(t reflect.Type) []flatField {
 			if !sf.IsExported() {
 				continue
 			}
-			add(sf, index, depth, true)
+			settable := true
+			if sf.Anonymous && sf.Type.Kind() == reflect.Ptr && sf.Type.Elem().Kind() == reflect.Struct {
+				// An embedded pointer to a struct is addressable by
+				// its type name on the same terms. Its own fields
+				// are not walked.
+				settable = sf.Type.Implements(textUnmarshalerType)
+			}
+			add(sf, index, depth, settable)
 		}
 	}
 	walk(t, nil, 0)
@@ -268,8 +278,7 @@ func intModeFromTag(field reflect.StructField) types.IntMode {
 
 // setField applies the value of the environment variable called name to a
 // single field. Slices append, matching gcfg's handling of a variable repeated
-// in a file. An error names the variable but not its value, which may be a
-// secret.
+// in a file. An error names the variable.
 func setField(f reflect.Value, name, val string, mode types.IntMode) error {
 	newRef, err := valFromEnvVarWithMode(f.Type(), val, mode)
 	if err != nil {
