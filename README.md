@@ -29,8 +29,14 @@ environment variables it applied and the ones it did not:
   name and an underscore, such as `APPNAME_SEC_TYPO`, but set nothing. Other
   variables carrying the prefix may belong to something else, so they are left
   out. `Unused` is empty when there is no prefix.
+* A section declared as a pointer to a struct is not set from the environment,
+  so its variables appear in neither list.
 
 A `Report` holds names only, never values, so it is safe to log.
+
+On a fatal error the `Report` is empty. `gcfg` also returns non-fatal warnings,
+such as an unknown variable in the file, and the `Report` is complete alongside
+them. `gcfg.FatalOnly(err)` returns nil when the error holds only warnings.
 
 Configuration fields are converted to environment variables using the follow
 rules:
