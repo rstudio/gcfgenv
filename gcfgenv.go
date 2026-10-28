@@ -111,9 +111,9 @@ type flatField struct {
 	// intMode is the field's own `int=` override, or zero for none.
 	intMode types.IntMode
 	// settable is false for an exported embedded struct, or pointer to
-	// one, whose type cannot be parsed from text. Such a field still takes part in name
-	// resolution, and can still be a section, but a property of that name
-	// is never set.
+	// one, whose type cannot be parsed from text. Such a field still takes
+	// part in name resolution, and can still be a section, but a property
+	// of that name is never set.
 	settable bool
 }
 
