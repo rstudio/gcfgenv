@@ -88,9 +88,9 @@ Known cases where an environment variable and a file entry disagree:
 
 * A property or section promoted through an embedded pointer is not reachable.
 
-* An exported embedded struct whose type does not implement
-  `encoding.TextUnmarshaler` is ignored when named by its type name. `gcfg`
-  accepts the name in a file and then fails to parse the value.
+* An exported embedded struct, or pointer to one, whose type does not
+  implement `encoding.TextUnmarshaler` is ignored when named by its type name.
+  `gcfg` accepts the name in a file and then fails to parse the value.
 
 * Competing names are resolved on the environment variable name rather than the
   Go field name, so two fields whose Go names collide but whose tags do not are
