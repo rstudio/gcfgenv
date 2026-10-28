@@ -537,6 +537,33 @@ func (s *Suite) TestUnnamedSubsectionDoesNotOverrideAKey(c *check.C) {
 	c.Check(cfg.Sec, check.DeepEquals, map[string]*sec{"A": {B: "x"}})
 }
 
+func (s *Suite) TestOverlappingPropertyNamesFollowDeclarationOrder(c *check.C) {
+	// SEC_K_OTHER_FIELD could be property Other_Field of subsection K or
+	// property Field of subsection K_OTHER. The property declared first
+	// claims it.
+	type fieldFirst struct {
+		Field       string
+		Other_Field string
+	}
+	type otherFirst struct {
+		Other_Field string
+		Field       string
+	}
+	type config struct {
+		FieldFirst map[string]*fieldFirst
+		OtherFirst map[string]*otherFirst
+	}
+
+	cfg := config{}
+	err := readWithMapInto(strings.NewReader(""), map[string]string{
+		"FIELDFIRST_K_OTHER_FIELD": "x",
+		"OTHERFIRST_K_OTHER_FIELD": "x",
+	}, "", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(cfg.FieldFirst, check.DeepEquals, map[string]*fieldFirst{"K_OTHER": {Field: "x"}})
+	c.Check(cfg.OtherFirst, check.DeepEquals, map[string]*otherFirst{"K": {Other_Field: "x"}})
+}
+
 func (s *Suite) TestGcfgTags(c *check.C) {
 	type sec1 struct {
 		F1 string `gcfg:"another-name"`
