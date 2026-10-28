@@ -47,6 +47,9 @@ rules:
   plain `[sec]` heading in a file. Where a name could be read either way, as
   with properties named `A_B` and `B`, `SEC_A_B` is property `B` of
   subsection `A`.
+* When one property's name ends in another's, as with `Other_Field` and
+  `Field`, a variable such as `SEC_K_OTHER_FIELD` sets whichever of the two is
+  declared first in the struct, with the rest of the name as the subsection.
 * Anonymous embedded structs are flattened, as in `gcfg`. A section or field
   declared on an embedded struct is named as though it were declared on the
   outer struct. An exported embedded struct is also addressable by its type
@@ -57,8 +60,6 @@ rules:
   reachable, as in Go.
 * Only the part of a `gcfg` tag before the first comma names the field. Options
   after it, such as `int=dho`, are honored.
-* A value that fails to parse fails the read, as it does in a file. The error
-  names the environment variable, but not its value, which may be a secret.
 
 For example, the following environment variables (and global prefix `APPNAME_`):
 
@@ -106,9 +107,9 @@ Known cases where an environment variable and a file entry disagree:
 
 * A property or section promoted through an embedded pointer is not reachable.
 
-* An exported embedded struct whose type does not implement
-  `encoding.TextUnmarshaler` is ignored when named by its type name. `gcfg`
-  accepts the name in a file and then fails to parse the value.
+* An exported embedded struct, or pointer to one, whose type does not
+  implement `encoding.TextUnmarshaler` is ignored when named by its type name.
+  `gcfg` accepts the name in a file and then fails to parse the value.
 
 * Competing names are resolved on the environment variable name rather than the
   Go field name, so two fields whose Go names collide but whose tags do not are
