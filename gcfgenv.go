@@ -258,8 +258,7 @@ func intModeFromTag(field reflect.StructField) types.IntMode {
 
 // setField applies the value of the environment variable called name to a
 // single field. Slices append, matching gcfg's handling of a variable repeated
-// in a file. An error names the variable but not its value, which may be a
-// secret.
+// in a file. An error names the variable.
 func setField(f reflect.Value, name, val string, mode types.IntMode) error {
 	newRef, err := valFromEnvVarWithMode(f.Type(), val, mode)
 	if err != nil {
