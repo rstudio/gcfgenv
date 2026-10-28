@@ -41,8 +41,6 @@ rules:
   reachable, as in Go.
 * Only the part of a `gcfg` tag before the first comma names the field. Options
   after it, such as `int=dho`, are honored.
-* A value that fails to parse fails the read, as it does in a file. The error
-  names the environment variable, but not its value, which may be a secret.
 
 For example, the following environment variables (and global prefix `APPNAME_`):
 
