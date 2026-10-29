@@ -164,6 +164,218 @@ func (s *Suite) TestFileSupport(c *check.C) {
 	c.Check(cfg, check.DeepEquals, config{Sec: sec{"value"}})
 }
 
+// ReportCommon is exported so that it is addressable by its type name.
+type ReportCommon struct {
+	Flag bool
+}
+
+type reportSec struct {
+	ReportCommon
+	Field string
+	Count int
+}
+
+type reportConfig struct {
+	Plain         reportSec
+	Keyed         map[string]*reportSec
+	Default_Keyed reportSec
+	Renamed       reportSec `gcfg:"other-name"`
+}
+
+func (s *Suite) TestReport(c *check.C) {
+	env := map[string]string{
+		// Applied.
+		"APP_PLAIN_FIELD":        "x",
+		"APP_PLAIN_FLAG":         "true",
+		"APP_KEYED_k1_FIELD":     "x", // existing subsection
+		"APP_KEYED_k2_FIELD":     "x", // new subsection
+		"APP_KEYED_COUNT":        "1", // unnamed subsection
+		"APP_OTHER_NAME_FIELD":   "x", // section renamed by a tag
+		"APP_DEFAULT_KEYED_FLAG": "true",
+		// Unused: each names a section but sets nothing.
+		"APP_PLAIN_BOGUS":         "x",
+		"APP_KEYED_k1_BOGUS":      "x",
+		"APP_PLAIN_REPORTCOMMON":  "x", // embedded type that does not parse
+		"APP_KEYED_REPORTCOMMON":  "x",
+		"APP_DEFAULT_KEYED_BOGUS": "x",
+		"APP_OTHER_NAME_BOGUS":    "x",
+		// In neither list.
+		"APP_OTHER_THING":   "x", // names no section
+		"APP_PLAIN":         "x", // a section name alone
+		"APP_RENAMED_FIELD": "x", // the Go name of a renamed section
+		"PLAIN_FIELD":       "x", // no prefix
+	}
+
+	cfg := reportConfig{}
+	report, err := readWithMapIntoReport(strings.NewReader("[keyed \"k1\"]\n"), env, "APP", &cfg)
+	c.Assert(err, check.IsNil)
+	c.Check(report.Applied, check.DeepEquals, []string{
+		"APP_DEFAULT_KEYED_FLAG",
+		"APP_KEYED_COUNT",
+		"APP_KEYED_k1_FIELD",
+		"APP_KEYED_k2_FIELD",
+		"APP_OTHER_NAME_FIELD",
+		"APP_PLAIN_FIELD",
+		"APP_PLAIN_FLAG",
+	})
+	c.Check(report.Unused, check.DeepEquals, []string{
+		"APP_DEFAULT_KEYED_BOGUS",
+		"APP_KEYED_REPORTCOMMON",
+		"APP_KEYED_k1_BOGUS",
+		"APP_OTHER_NAME_BOGUS",
+		"APP_PLAIN_BOGUS",
+		"APP_PLAIN_REPORTCOMMON",
+	})
+	// The report reflects what was set.
+	c.Check(cfg.Plain, check.DeepEquals, reportSec{ReportCommon: ReportCommon{Flag: true}, Field: "x"})
+	c.Check(cfg.Keyed[""].Count, check.Equals, 1)
+	c.Check(cfg.Renamed.Field, check.Equals, "x")
+}
+
+func (s *Suite) TestReportWithOverlappingSectionNames(c *check.C) {
+	// A variable for section Sec_X also starts with Sec's prefix. Each is
+	// reported once, against whichever section it sets.
+	type sec struct {
+		Field string
+	}
+	type config struct {
+		Sec   sec
+		Sec_X sec
+	}
+
+	cfg := config{}
+	report, err := readWithMapIntoReport(strings.NewReader(""), map[string]string{
+		"APP_SEC_FIELD":   "x",
+		"APP_SEC_X_FIELD": "y",
+		"APP_SEC_BOGUS":   "x",
+		"APP_SEC_X_BOGUS": "x",
+	}, "APP", &cfg)
+	c.Assert(err, check.IsNil)
+	c.Check(report, check.DeepEquals, Report{
+		Applied: []string{"APP_SEC_FIELD", "APP_SEC_X_FIELD"},
+		Unused:  []string{"APP_SEC_BOGUS", "APP_SEC_X_BOGUS"},
+	})
+	c.Check(cfg, check.DeepEquals, config{Sec: sec{Field: "x"}, Sec_X: sec{Field: "y"}})
+}
+
+// ReportSections is exported so that its sections are promoted.
+type ReportSections struct {
+	Inner reportSec
+}
+
+func (s *Suite) TestReportThroughAnEmbeddedStruct(c *check.C) {
+	// A section promoted from an embedded struct is reported like any
+	// other.
+	type config struct {
+		ReportSections
+	}
+
+	cfg := config{}
+	report, err := readWithMapIntoReport(strings.NewReader(""), map[string]string{
+		"APP_INNER_FIELD": "x",
+		"APP_INNER_BOGUS": "x",
+	}, "APP", &cfg)
+	c.Assert(err, check.IsNil)
+	c.Check(report, check.DeepEquals, Report{
+		Applied: []string{"APP_INNER_FIELD"},
+		Unused:  []string{"APP_INNER_BOGUS"},
+	})
+	c.Check(cfg.Inner.Field, check.Equals, "x")
+}
+
+func (s *Suite) TestReportSkipsPointerSections(c *check.C) {
+	// A section declared as a pointer to a struct is not set from the
+	// environment, so its variables are in neither list.
+	type config struct {
+		Ptr *reportSec
+	}
+
+	cfg := config{}
+	report, err := readWithMapIntoReport(strings.NewReader(""), map[string]string{
+		"APP_PTR_FIELD": "x",
+		"APP_PTR_BOGUS": "x",
+	}, "APP", &cfg)
+	c.Assert(err, check.IsNil)
+	c.Check(report, check.DeepEquals, Report{})
+	c.Check(cfg.Ptr, check.IsNil)
+}
+
+func (s *Suite) TestReportWithoutAPrefix(c *check.C) {
+	// With no prefix every variable could name a section, so nothing is
+	// reported as unused.
+	cfg := reportConfig{}
+	report, err := readWithMapIntoReport(strings.NewReader(""), map[string]string{
+		"PLAIN_FIELD": "x",
+		"PLAIN_BOGUS": "x",
+	}, "", &cfg)
+	c.Assert(err, check.IsNil)
+	c.Check(report, check.DeepEquals, Report{Applied: []string{"PLAIN_FIELD"}})
+}
+
+func (s *Suite) TestReportOnError(c *check.C) {
+	cfg := reportConfig{}
+	report, err := readWithMapIntoReport(strings.NewReader(""), map[string]string{
+		"APP_PLAIN_FIELD": "x",
+		"APP_PLAIN_COUNT": "notanumber",
+	}, "APP", &cfg)
+	c.Check(err, check.ErrorMatches, "environment variable APP_PLAIN_COUNT: .*")
+	c.Check(report, check.DeepEquals, Report{})
+
+	report, err = readWithMapIntoReport(strings.NewReader("[plain\n"), map[string]string{
+		"APP_PLAIN_FIELD": "x",
+	}, "APP", &cfg)
+	c.Check(err, check.NotNil)
+	c.Check(report, check.DeepEquals, Report{})
+}
+
+func (s *Suite) TestReportWithUpstreamWarnings(c *check.C) {
+	// gcfg's non-fatal warnings do not stop the read, so the report is
+	// still complete.
+	cfg := reportConfig{}
+	report, err := readWithMapIntoReport(strings.NewReader("[plain]\nunknown = x\n"), map[string]string{
+		"APP_PLAIN_FIELD": "x",
+		"APP_PLAIN_BOGUS": "x",
+	}, "APP", &cfg)
+	c.Check(err, check.NotNil)
+	c.Check(gcfg.FatalOnly(err), check.IsNil)
+	c.Check(report, check.DeepEquals, Report{
+		Applied: []string{"APP_PLAIN_FIELD"},
+		Unused:  []string{"APP_PLAIN_BOGUS"},
+	})
+}
+
+func (s *Suite) TestReportFromTheProcessEnvironment(c *check.C) {
+	os.Setenv("GCFGENVTEST_PLAIN_FIELD", "x")
+	os.Setenv("GCFGENVTEST_PLAIN_BOGUS", "x")
+	defer func() {
+		os.Unsetenv("GCFGENVTEST_PLAIN_FIELD")
+		os.Unsetenv("GCFGENVTEST_PLAIN_BOGUS")
+	}()
+	want := Report{
+		Applied: []string{"GCFGENVTEST_PLAIN_FIELD"},
+		Unused:  []string{"GCFGENVTEST_PLAIN_BOGUS"},
+	}
+
+	cfg := reportConfig{}
+	report, err := ReadWithEnvIntoReport(strings.NewReader(""), "GCFGENVTEST", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(report, check.DeepEquals, want)
+
+	f, err := os.CreateTemp(c.MkDir(), "*.cfg")
+	c.Assert(err, check.IsNil)
+	f.WriteString("[plain]\ncount = 2\n")
+	f.Close()
+	cfg = reportConfig{}
+	report, err = ReadFileWithEnvIntoReport(f.Name(), "GCFGENVTEST", &cfg)
+	c.Check(err, check.IsNil)
+	c.Check(report, check.DeepEquals, want)
+	c.Check(cfg.Plain.Count, check.Equals, 2)
+
+	report, err = ReadFileWithEnvIntoReport("doesnotexist.cfg", "GCFGENVTEST", &cfg)
+	c.Check(err, check.NotNil)
+	c.Check(report, check.DeepEquals, Report{})
+}
+
 func (s *Suite) TestMapFromEnviron(c *check.C) {
 	environ := []string{
 		"APPNAME_SEC_FIELD=geese",
