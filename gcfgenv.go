@@ -383,6 +383,22 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 			if defaults == (reflect.Value{}) {
 				defaults = reflect.Zero(subsecType)
 			}
+			// subsection returns the subsection named k, creating it
+			// from the defaults if it does not exist yet.
+			subsection := func(k string) reflect.Value {
+				key := reflect.ValueOf(k)
+				if sec.IsNil() {
+					m := reflect.MakeMap(sec.Type())
+					sec.Set(m)
+				}
+				f := sec.MapIndex(key)
+				if f == (reflect.Value{}) {
+					f = reflect.New(subsecType)
+					f.Elem().Set(defaults)
+					sec.SetMapIndex(key, f)
+				}
+				return f.Elem()
+			}
 			for _, ff := range subsecFields {
 				if !ff.settable {
 					continue
@@ -397,24 +413,31 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 					// name would otherwise lose the wrong part
 					// of itself.
 					k := strings.TrimSuffix(e, suf)
-					key := reflect.ValueOf(k)
-					if sec.IsNil() {
-						m := reflect.MakeMap(sec.Type())
-						sec.Set(m)
-					}
-					f := sec.MapIndex(key)
-					if f == (reflect.Value{}) {
-						f = reflect.New(subsecType)
-						f.Elem().Set(defaults)
-						sec.SetMapIndex(key, f)
-					}
-					if err := setField(f.Elem().FieldByIndex(ff.index), secPrefix+"_"+e, v, ff.intMode); err != nil {
+					if err := setField(subsection(k).FieldByIndex(ff.index), secPrefix+"_"+e, v, ff.intMode); err != nil {
 						return err
 					}
 					// TODO: Does this have any unfortunate
 					// side-effects?
 					delete(matchingEnv, e)
 				}
+			}
+
+			// Third, a variable that names a property with no
+			// subsection name sets the unnamed subsection, as a plain
+			// [section] heading does in a file. This runs last so that
+			// a variable the keyed pass resolved keeps that meaning.
+			for _, ff := range subsecFields {
+				if !ff.settable {
+					continue
+				}
+				v, found := matchingEnv[ff.name]
+				if !found {
+					continue
+				}
+				if err := setField(subsection("").FieldByIndex(ff.index), secPrefix+"_"+ff.name, v, ff.intMode); err != nil {
+					return err
+				}
+				delete(matchingEnv, ff.name)
 			}
 
 			continue
