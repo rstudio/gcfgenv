@@ -4,6 +4,7 @@
 package gcfgenv
 
 import (
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -293,7 +294,7 @@ f1 = value
 
 	configEnvVars["SEC2_F2"] = "notanumber"
 	err = readWithMapInto(r, configEnvVars, "", &cfg)
-	c.Check(err, check.ErrorMatches, "failed to parse.*")
+	c.Check(err, check.ErrorMatches, "environment variable SEC2_F2: failed to parse.*")
 }
 
 func (s *Suite) TestSkipPrivate(c *check.C) {
@@ -440,12 +441,37 @@ f1 = three
 
 	configEnvVars["SEC2_k1_F3"] = "notanumber"
 	err = readWithMapInto(r, configEnvVars, "", &cfg)
-	c.Check(err, check.ErrorMatches, "failed to parse.*")
+	c.Check(err, check.ErrorMatches, "environment variable SEC2_k1_F3: failed to parse.*")
 
 	configEnvVars["SEC2_k1_F3"] = "1"
 	configEnvVars["SEC2_k3_F3"] = "notanumber"
 	err = readWithMapInto(r, configEnvVars, "", &cfg)
-	c.Check(err, check.ErrorMatches, "failed to parse.*")
+	c.Check(err, check.ErrorMatches, "environment variable SEC2_k3_F3: failed to parse.*")
+}
+
+func (s *Suite) TestErrorsNameTheVariable(c *check.C) {
+	// A value that does not parse fails the read, as it does in a file. The
+	// error names the variable, including the prefix, so that it can be
+	// found, and wraps the parse error unchanged.
+	type sec struct {
+		Count int
+	}
+	type config struct {
+		Plain sec
+		Keyed map[string]*sec
+	}
+
+	_, parseErr := valFromEnvVar(reflect.TypeOf(0), "notanumber")
+	c.Assert(parseErr, check.NotNil)
+
+	for _, name := range []string{"APP_PLAIN_COUNT", "APP_KEYED_k1_COUNT", "APP_KEYED_k2_COUNT"} {
+		cfg := config{}
+		err := readWithMapInto(strings.NewReader("[keyed \"k1\"]\n"),
+			map[string]string{name: "notanumber"}, "APP", &cfg)
+		c.Check(err, check.ErrorMatches, "environment variable "+name+": failed to parse.*")
+		c.Assert(errors.Unwrap(err), check.NotNil, check.Commentf("%s", name))
+		c.Check(errors.Unwrap(err).Error(), check.Equals, parseErr.Error(), check.Commentf("%s", name))
+	}
 }
 
 func (s *Suite) TestGcfgTags(c *check.C) {

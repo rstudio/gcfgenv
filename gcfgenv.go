@@ -256,12 +256,13 @@ func intModeFromTag(field reflect.StructField) types.IntMode {
 	return m
 }
 
-// setField applies an environment variable's value to a single field. Slices
-// append, matching gcfg's handling of a variable repeated in a file.
-func setField(f reflect.Value, val string, mode types.IntMode) error {
+// setField applies the value of the environment variable called name to a
+// single field. Slices append, matching gcfg's handling of a variable repeated
+// in a file. An error names the variable.
+func setField(f reflect.Value, name, val string, mode types.IntMode) error {
 	newRef, err := valFromEnvVarWithMode(f.Type(), val, mode)
 	if err != nil {
-		return err
+		return fmt.Errorf("environment variable %s: %w", name, err)
 	}
 	if f.Kind() == reflect.Slice {
 		f.Set(reflect.AppendSlice(f, newRef))
@@ -294,11 +295,12 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 				if !f.CanSet() {
 					continue
 				}
-				val, found := env[secPrefix+"_"+ff.name]
+				name := secPrefix + "_" + ff.name
+				val, found := env[name]
 				if !found {
 					continue
 				}
-				if err := setField(f, val, ff.intMode); err != nil {
+				if err := setField(f, name, val, ff.intMode); err != nil {
 					return err
 				}
 			}
@@ -343,7 +345,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 						continue
 					}
 					delete(matchingEnv, envVar)
-					if err := setField(f, val, ff.intMode); err != nil {
+					if err := setField(f, secPrefix+"_"+envVar, val, ff.intMode); err != nil {
 						return err
 					}
 				}
@@ -383,7 +385,7 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 						f.Elem().Set(defaults)
 						sec.SetMapIndex(key, f)
 					}
-					if err := setField(f.Elem().FieldByIndex(ff.index), v, ff.intMode); err != nil {
+					if err := setField(f.Elem().FieldByIndex(ff.index), secPrefix+"_"+e, v, ff.intMode); err != nil {
 						return err
 					}
 					// TODO: Does this have any unfortunate
