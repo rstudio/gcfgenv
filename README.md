@@ -53,6 +53,9 @@ rules:
   plain `[sec]` heading in a file. Where a name could be read either way, as
   with properties named `A_B` and `B`, `SEC_A_B` is property `B` of
   subsection `A`.
+* Leaving the subsection name out creates the unnamed subsection only when the
+  section has no named subsection, from the file or from another variable.
+  Otherwise the variable sets nothing and is reported as unused.
 * When one property's name ends in another's, as with `Other_Field` and
   `Field`, a variable such as `SEC_K_OTHER_FIELD` sets whichever of the two is
   declared first in the struct, with the rest of the name as the subsection.
@@ -70,7 +73,6 @@ rules:
 For example, the following environment variables (and global prefix `APPNAME_`):
 
 ``` shell
-APPNAME_SEC_FIELD=geese
 APPNAME_SEC_k1_FIELD=cats
 APPNAME_SEC_k1_OTHER_FIELD=zebras,elephants
 ```
@@ -78,9 +80,6 @@ APPNAME_SEC_k1_OTHER_FIELD=zebras,elephants
 are equivalent to the following configuration file:
 
 ``` ini
-[sec]
-field = geese
-
 [sec "k1"]
 field = cats
 other-field = zebras
@@ -120,6 +119,11 @@ Known cases where an environment variable and a file entry disagree:
 * Competing names are resolved on the environment variable name rather than the
   Go field name, so two fields whose Go names collide but whose tags do not are
   settable here and refused by `gcfg`.
+
+* A variable with no subsection name, such as `APPNAME_SEC_FIELD`, is unused
+  when the section has a named subsection and no unnamed one. In a file, a
+  plain `[sec]` heading creates the unnamed subsection alongside the named
+  ones.
 
 * `Default_<Section>` is matched by Go field name, where `gcfg` folds
   `default-<section name>`. A section renamed by a tag takes its defaults from
