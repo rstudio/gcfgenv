@@ -328,6 +328,18 @@ func setField(f reflect.Value, name, val string, mode types.IntMode) error {
 	return nil
 }
 
+// hasNamedSubsection reports whether the map-valued section sec holds a
+// subsection other than the unnamed one.
+func hasNamedSubsection(sec reflect.Value) bool {
+	iter := sec.MapRange()
+	for iter.Next() {
+		if iter.Key().String() != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) (Report, error) {
 	refType := ref.Type()
 	applied := make(map[string]bool)
@@ -477,6 +489,16 @@ func setGcfgWithEnvMap(ref reflect.Value, prefix string, env map[string]string) 
 			// subsection name sets the unnamed subsection, as a plain
 			// [section] heading does in a file. This runs last so that
 			// a variable the keyed pass resolved keeps that meaning.
+			//
+			// An unnamed subsection that already exists was filled by
+			// the first pass. One is created only when the section has
+			// no named subsection: beside named ones, the variable may
+			// be meant for them, and a subsection built from the
+			// defaults may be one the application rejects. Such a
+			// variable is left unused.
+			if hasNamedSubsection(sec) {
+				continue
+			}
 			for _, ff := range subsecFields {
 				if !ff.settable {
 					continue

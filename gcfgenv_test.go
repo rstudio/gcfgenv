@@ -189,10 +189,10 @@ func (s *Suite) TestReport(c *check.C) {
 		"APP_PLAIN_FLAG":         "true",
 		"APP_KEYED_k1_FIELD":     "x", // existing subsection
 		"APP_KEYED_k2_FIELD":     "x", // new subsection
-		"APP_KEYED_COUNT":        "1", // unnamed subsection
 		"APP_OTHER_NAME_FIELD":   "x", // section renamed by a tag
 		"APP_DEFAULT_KEYED_FLAG": "true",
 		// Unused: each names a section but sets nothing.
+		"APP_KEYED_COUNT":         "1", // unnamed, beside a named subsection
 		"APP_PLAIN_BOGUS":         "x",
 		"APP_KEYED_k1_BOGUS":      "x",
 		"APP_PLAIN_REPORTCOMMON":  "x", // embedded type that does not parse
@@ -211,7 +211,6 @@ func (s *Suite) TestReport(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Check(report.Applied, check.DeepEquals, []string{
 		"APP_DEFAULT_KEYED_FLAG",
-		"APP_KEYED_COUNT",
 		"APP_KEYED_k1_FIELD",
 		"APP_KEYED_k2_FIELD",
 		"APP_OTHER_NAME_FIELD",
@@ -220,6 +219,7 @@ func (s *Suite) TestReport(c *check.C) {
 	})
 	c.Check(report.Unused, check.DeepEquals, []string{
 		"APP_DEFAULT_KEYED_BOGUS",
+		"APP_KEYED_COUNT",
 		"APP_KEYED_REPORTCOMMON",
 		"APP_KEYED_k1_BOGUS",
 		"APP_OTHER_NAME_BOGUS",
@@ -228,7 +228,7 @@ func (s *Suite) TestReport(c *check.C) {
 	})
 	// The report reflects what was set.
 	c.Check(cfg.Plain, check.DeepEquals, reportSec{ReportCommon: ReportCommon{Flag: true}, Field: "x"})
-	c.Check(cfg.Keyed[""].Count, check.Equals, 1)
+	c.Check(cfg.Keyed[""], check.IsNil)
 	c.Check(cfg.Renamed.Field, check.Equals, "x")
 }
 
@@ -710,18 +710,6 @@ func (s *Suite) TestUnnamedSubsection(c *check.C) {
 	c.Check(byEnv, check.DeepEquals, byFile)
 	c.Check(byEnv.Sec, check.DeepEquals, map[string]*sec{"": {Field: "x", Other: "default"}})
 
-	// Alongside a named subsection.
-	byEnv = config{Default_Sec: sec{Other: "default"}}
-	err = readWithMapInto(strings.NewReader(""), map[string]string{
-		"SEC_FIELD":    "x",
-		"SEC_k1_FIELD": "y",
-	}, "", &byEnv)
-	c.Check(err, check.IsNil)
-	c.Check(byEnv.Sec, check.DeepEquals, map[string]*sec{
-		"":   {Field: "x", Other: "default"},
-		"k1": {Field: "y", Other: "default"},
-	})
-
 	// An unnamed subsection that already exists is filled in place.
 	byEnv = config{Sec: map[string]*sec{"": {Other: "seeded"}}}
 	err = readWithMapInto(strings.NewReader(""), map[string]string{
@@ -729,6 +717,66 @@ func (s *Suite) TestUnnamedSubsection(c *check.C) {
 	}, "", &byEnv)
 	c.Check(err, check.IsNil)
 	c.Check(byEnv.Sec, check.DeepEquals, map[string]*sec{"": {Field: "x", Other: "seeded"}})
+
+	// An existing unnamed subsection is filled alongside a named one.
+	byEnv = config{}
+	err = readWithMapInto(strings.NewReader("[sec]\n[sec \"k1\"]\n"), map[string]string{
+		"SEC_FIELD": "x",
+	}, "", &byEnv)
+	c.Check(err, check.IsNil)
+	c.Check(byEnv.Sec, check.DeepEquals, map[string]*sec{"": {Field: "x"}, "k1": {}})
+}
+
+func (s *Suite) TestUnnamedSubsectionIsNotCreatedBesideANamedOne(c *check.C) {
+	// With only named subsections, a variable with no subsection name is
+	// ambiguous: the application may read it as applying to the named ones.
+	// Creating an unnamed subsection from the defaults next to them could
+	// also leave the application with a subsection it rejects. The variable
+	// is reported as unused instead.
+	type sec struct {
+		Field string
+		Other string
+	}
+	type config struct {
+		Sec         map[string]*sec
+		Default_Sec sec
+	}
+
+	// Named in the file.
+	cfg := config{Default_Sec: sec{Other: "default"}}
+	report, err := readWithMapIntoReport(strings.NewReader("[sec \"k1\"]\n"), map[string]string{
+		"APP_SEC_FIELD": "x",
+	}, "APP", &cfg)
+	c.Assert(err, check.IsNil)
+	c.Check(report, check.DeepEquals, Report{Unused: []string{"APP_SEC_FIELD"}})
+	c.Check(cfg.Sec, check.DeepEquals, map[string]*sec{"k1": {Other: "default"}})
+
+	// Named by another variable.
+	cfg = config{Default_Sec: sec{Other: "default"}}
+	report, err = readWithMapIntoReport(strings.NewReader(""), map[string]string{
+		"APP_SEC_FIELD":    "x",
+		"APP_SEC_k1_FIELD": "y",
+	}, "APP", &cfg)
+	c.Assert(err, check.IsNil)
+	c.Check(report, check.DeepEquals, Report{
+		Applied: []string{"APP_SEC_k1_FIELD"},
+		Unused:  []string{"APP_SEC_FIELD"},
+	})
+	c.Check(cfg.Sec, check.DeepEquals, map[string]*sec{"k1": {Field: "y", Other: "default"}})
+
+	// A value that does not parse is not read, so it does not fail the read.
+	type typed struct {
+		Count int
+	}
+	type typedConfig struct {
+		Sec map[string]*typed
+	}
+	tcfg := typedConfig{}
+	report, err = readWithMapIntoReport(strings.NewReader("[sec \"k1\"]\n"), map[string]string{
+		"APP_SEC_COUNT": "notanumber",
+	}, "APP", &tcfg)
+	c.Assert(err, check.IsNil)
+	c.Check(report.Unused, check.DeepEquals, []string{"APP_SEC_COUNT"})
 }
 
 func (s *Suite) TestUnnamedSubsectionDoesNotOverrideAKey(c *check.C) {
